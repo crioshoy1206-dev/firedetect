@@ -121,6 +121,7 @@ app.get('/api/data', async (req, res) => {
 
 /**
  * 💡 POST /api/add/sensor: 직접 감지 값 (시뮬레이션) 저장
+ * 🚨 수정: lat, lon, smoke, temp를 명시적으로 숫자로 변환 (parseFloat)
  */
 app.post('/api/add/sensor', async (req, res) => {
     try {
@@ -130,9 +131,10 @@ app.post('/api/add/sensor', async (req, res) => {
         }
         
         const newDoc = {
-            lat, lon, 
-            smoke: parseFloat(smoke), 
-            temp: parseFloat(temp), 
+            lat: parseFloat(lat), // 🚨 수정
+            lon: parseFloat(lon), // 🚨 수정
+            smoke: parseFloat(smoke), // 🚨 수정
+            temp: parseFloat(temp), // 🚨 수정
             humidity: parseFloat(humidity || 0), 
             time: parseInt(time) || Date.now(),
             createdAt: admin.firestore.FieldValue.serverTimestamp()
@@ -150,6 +152,7 @@ app.post('/api/add/sensor', async (req, res) => {
 
 /**
  * 💡 POST /api/add/citizen: 시민 신고 값 저장
+ * 🚨 수정: lat, lon을 명시적으로 숫자로 변환 (parseFloat)
  */
 app.post('/api/add/citizen', async (req, res) => {
     try {
@@ -159,7 +162,8 @@ app.post('/api/add/citizen', async (req, res) => {
         }
         
         const newDoc = {
-            lat, lon, 
+            lat: parseFloat(lat), // 🚨 수정
+            lon: parseFloat(lon), // 🚨 수정
             time: parseInt(time) || Date.now(),
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         };
@@ -176,6 +180,7 @@ app.post('/api/add/citizen', async (req, res) => {
 
 /**
  * 💡 POST /api/add/pre: 소각 사전 신고 정보 저장
+ * 🚨 수정: lat, lon, rangeKm을 명시적으로 숫자로 변환 (parseFloat)
  */
 app.post('/api/add/pre', async (req, res) => {
     try {
@@ -185,7 +190,8 @@ app.post('/api/add/pre', async (req, res) => {
         }
         
         const newDoc = {
-            lat, lon, 
+            lat: parseFloat(lat), // 🚨 수정
+            lon: parseFloat(lon), // 🚨 수정
             startDate: parseInt(startDate),
             endDate: parseInt(endDate),
             rangeKm: parseFloat(rangeKm || 0.1),
