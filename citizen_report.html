@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>불법 소각 간편 신고</title>
+    <!-- Tailwind CSS 로드 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap" rel="stylesheet">
+    <!-- Leaflet (지도 표시용) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        body { font-family: 'Noto Sans KR', sans-serif; }
+        .spinner { 
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            width: 1.5rem;
+            height: 1.5rem;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        #map-preview { 
+            height: 300px; 
+            z-index: 10;
+        }
+        .report-button-icon {
+            transform: translateY(-2px); /* 아이콘 위치 미세 조정 */
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center justify-start py-8 px-4">
+
+    <div id="app" class="w-full max-w-lg bg-white rounded-3xl shadow-2xl p-6 md:p-8 space-y-6">
+        <header class="text-center">
+            <h1 class="text-4xl font-extrabold text-red-600 mb-2">
+                🚨 불법 소각 신고
+            </h1>
+            <p class="text-md text-gray-500">
+                현재 위치 기반, 빠르고 간편한 신고 서비스
+            </p>
+        </header>
+        
+        <!-- 위치 정보 및 상태 영역 -->
+        <div class="bg-indigo-50 p-4 rounded-xl border-2 border-indigo-200 shadow-inner">
+            <div class="flex items-center justify-between mb-2">
+                <h2 class="text-xl font-bold text-indigo-800">나의 현재 위치</h2>
+                <button id="refresh-button" 
+                        class="px-3 py-1 text-sm text-indigo-700 bg-indigo-200 rounded-full hover:bg-indigo-300 transition duration-200 flex items-center">
+                    <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 0014.28 2.045M20 20v-5h-.581m-15.357-2A8.001 8.001 0 019.72 21.956"></path></svg>
+                    새로고침
+                </button>
+            </div>
+            
+            <p id="status" class="text-base text-indigo-600 font-medium animate-pulse">GPS 정보를 가져오는 중입니다...</p>
+            <p id="lat-lon" class="text-sm text-indigo-600 mt-1 hidden font-mono">
+                Lat: <span id="lat" class="font-bold">N/A</span>, Lon: <span id="lon" class="font-bold">N/A</span>
+            </p>
+        </div>
+
+        <!-- 지도 미리보기 -->
+        <div id="map-preview" class="rounded-xl shadow-lg border border-gray-300"></div>
+
+        <!-- 소각 예정 정보 목록 -->
+        <div class="bg-yellow-50 p-4 rounded-xl border-2 border-yellow-300 shadow-md">
+            <h2 class="text-xl font-bold text-yellow-800 mb-3 flex items-center">
+                🔥 주변 소각 예정 정보 (<span id="pre-report-count" class="mx-1">0</span>건)
+                <div id="pre-report-loading" class="spinner border-t-2 border-r-2 border-b-2 border-yellow-700 rounded-full w-4 h-4 ml-2 hidden"></div>
+            </h2>
+            <ul id="pre-report-list" class="text-sm space-y-2">
+                <li id="pre-report-placeholder" class="text-yellow-700">지도를 움직여 주변의 소각 예정 정보를 확인해 보세요.</li>
+            </ul>
+        </div>
+
+        <!-- 신고 버튼 영역 -->
+        <button id="report-button" 
+                class="w-full py-5 mt-4 text-white text-xl font-black rounded-2xl shadow-xl 
+                       bg-red-600 hover:bg-red-700 transition duration-300 transform hover:scale-[1.01]
+                       focus:outline-none focus:ring-4 focus:ring-red-300 focus:ring-offset-2
+                       disabled:bg-gray-400 disabled:shadow-none disabled:cursor-not-allowed 
+                       flex items-center justify-center space-x-2"
+                disabled>
+            <span class="report-button-icon text-2xl" style="line-height: 1;">🔥</span>
+            <span id="button-text">지금 불법 소각 신고하기</span>
+            <div id="loading-spinner" class="spinner border-t-2 border-r-2 border-b-2 border-white rounded-full w-5 h-5 ml-2 hidden"></div>
+        </button>
+        <p class="text-xs text-gray-400 text-center pt-2">
+            본 신고는 현재 GPS 위치를 기반으로 즉시 접수됩니다.
+        </p>
+
+        <!-- 결과 메시지 모달 (Alert 대체) -->
+        <div id="message-modal" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50 transition-opacity duration-300">
+            <div class="bg-white rounded-xl p-7 w-full max-w-sm shadow-3xl transform scale-95 transition-transform duration-300">
+                <h3 id="modal-title" class="text-2xl font-black mb-3 text-red-600 border-b pb-2"></h3>
+                <p id="modal-message" class="text-gray-700 mb-6"></p>
+                <button id="modal-close" class="w-full bg-red-600 text-white py-3 rounded-xl text-lg font-bold hover:bg-red-700 transition">확인</button>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // 상수 정의 및 초기 상태
+        let currentLat = null;
+        let currentLon = null;
+        let map = null;
+        let marker = null;
+        let preReportLayer = L.layerGroup(); 
+        let allPreReports = []; 
+        let isFetchingReports = false;
+
+        // Vercel API 엔드포인트
+        // 🚨 사용자는 이 값을 자신의 Vercel URL로 변경해야 합니다.
+        const VERCEL_API_BASE_URL = "firedetect.vercel.app";
+        const VERCEL_API_ENDPOINT_REPORT = `${VERCEL_API_BASE_URL}/api/add/citizen`;
+        const VERCEL_API_ENDPOINT_DATA = `${VERCEL_API_BASE_URL}/api/data`;
+        
+        // DOM 요소
+        const statusEl = document.getElementById('status');
+        const latLonEl = document.getElementById('lat-lon');
+        const latEl = document.getElementById('lat');
+        const lonEl = document.getElementById('lon');
+        const reportButton = document.getElementById('report-button');
+        const refreshButton = document.getElementById('refresh-button');
+        const spinner = document.getElementById('loading-spinner');
+        const buttonText = document.getElementById('button-text');
+        
+        const preReportList = document.getElementById('pre-report-list');
+        const preReportCountEl = document.getElementById('pre-report-count');
+        const preReportLoading = document.getElementById('pre-report-loading');
+        
+        const modal = document.getElementById('message-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalMessage = document.getElementById('modal-message');
+        const modalClose = document.getElementById('modal-close');
+
+        // 유틸리티 함수: 두 위경도 사이의 거리 (km) 계산 (Haversine 공식)
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371; 
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = 
+                Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c; // 거리 (km)
+        }
+
+        // 모달 표시 함수 (alert 대체)
+        function showModal(title, message, isError = false) {
+            modalTitle.textContent = title;
+            modalMessage.textContent = message;
+            modalTitle.classList.toggle('text-red-600', isError);
+            modalTitle.classList.toggle('text-green-600', !isError);
+            modalTitle.classList.toggle('text-yellow-800', !isError && title.includes('확인'));
+            
+            modalClose.classList.toggle('bg-red-600', isError);
+            modalClose.classList.toggle('bg-green-600', !isError && !title.includes('확인'));
+            modalClose.classList.toggle('bg-yellow-600', !isError && title.includes('확인'));
+            
+            modal.classList.remove('hidden');
+        }
+
+        // 모달 닫기 이벤트 리스너
+        modalClose.addEventListener('click', () => {
+            modal.classList.add('hidden');
+        });
+
+        // 지도 초기화 함수
+        function initMap(lat, lon) {
+            if (map) {
+                map.remove();
+            }
+            map = L.map('map-preview', {
+                zoomControl: true, 
+                attributionControl: false,
+                scrollWheelZoom: true, 
+                dragging: true 
+            }).setView([lat, lon], 17);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+            }).addTo(map);
+            
+            map.addLayer(preReportLayer);
+
+            // 초기 마커 추가 (현재 위치)
+            marker = L.marker([lat, lon], { 
+                draggable: false, 
+                icon: L.divIcon({ 
+                    className: 'bg-transparent text-center text-4xl', 
+                    html: '📍', 
+                    iconSize: [30, 42],
+                    iconAnchor: [15, 42]
+                }) 
+            }).addTo(map)
+              .bindPopup("<b class='text-red-600'>나의 신고 위치</b>").openPopup();
+
+            // 지도가 이동할 때마다 소각 예정 정보 갱신
+            map.on('moveend', checkPreReportsOnMove);
+
+            // 데이터 로드 시작
+            fetchPreReports();
+        }
+
+        // 서버에서 사전 신고 데이터 가져오기
+        async function fetchPreReports() {
+            if (isFetchingReports) return;
+            isFetchingReports = true;
+            preReportLoading.classList.remove('hidden');
+
+            try {
+                const response = await fetch(VERCEL_API_ENDPOINT_DATA);
+                if (!response.ok) {
+                    throw new Error(`HTTP Error! Status: ${response.status}`);
+                }
+                const data = await response.json();
+                // 사전 신고 데이터만 추출
+                allPreReports = data.preReports || [];
+                console.log("Pre-Reports loaded:", allPreReports.length);
+                
+                if(map) {
+                    checkPreReportsOnMove();
+                }
+
+            } catch (error) {
+                console.error("사전 신고 데이터 로드 오류:", error);
+                // 네트워크 오류 메시지 처리
+            } finally {
+                isFetchingReports = false;
+                preReportLoading.classList.add('hidden');
+            }
+        }
+        
+        // 지도가 움직였을 때 주변 소각 예정 정보 확인 및 시각화
+        function checkPreReportsOnMove() {
+            if (!map || allPreReports.length === 0) return;
+
+            const center = map.getCenter();
+            const today = Date.now();
+            preReportLayer.clearLayers(); 
+            
+            const nearbyReports = allPreReports.filter(report => {
+                const distance = calculateDistance(center.lat, center.lng, report.lat, report.lon);
+                // 거리 1km 이내 확인
+                const isNearby = distance <= 1; 
+                // 기간 확인 (현재 시간 기준)
+                const isOngoing = report.startDate <= today && today <= report.endDate;
+                
+                return isNearby && isOngoing;
+            });
+
+            // 목록 업데이트
+            renderPreReportList(nearbyReports);
+
+            // 지도에 마커/원 표시
+            nearbyReports.forEach(report => {
+                const startDate = new Date(report.startDate).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                const endDate = new Date(report.endDate).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+                // 원형 범위 표시 (1km 반경)
+                L.circle([report.lat, report.lon], {
+                    color: '#f97316', // 주황색
+                    fillColor: '#fcd34d', // 채워진 노란색
+                    fillOpacity: 0.3,
+                    radius: 1000 // 1000m = 1km
+                }).addTo(preReportLayer)
+                .bindPopup(`
+                    <b class='text-yellow-800'>[소각 예정 구역]</b><br>
+                    <b>기간:</b> ${startDate} ~ ${endDate}
+                `);
+
+                // 불꽃 아이콘 마커
+                L.marker([report.lat, report.lon], { icon: L.divIcon({ 
+                    className: 'bg-transparent text-yellow-600 text-3xl font-bold', 
+                    html: '🔥', 
+                    iconSize: [30, 30] 
+                })}).addTo(preReportLayer);
+            });
+        }
+        
+        // 주변 소각 예정 정보 목록을 HTML로 렌더링
+        function renderPreReportList(reports) {
+            preReportCountEl.textContent = reports.length;
+            preReportList.innerHTML = ''; 
+
+            if (reports.length === 0) {
+                preReportList.innerHTML = `<li class="text-green-600 font-medium">✨ 현재 지도 중앙 주변 1km 이내 소각 예정 정보가 없습니다.</li>`;
+                return;
+            }
+
+            reports.forEach((report, index) => {
+                const startDate = new Date(report.startDate).toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                const endDate = new Date(report.endDate).toLocaleString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+                
+                const listItem = document.createElement('li');
+                listItem.classList.add('text-yellow-700', 'border-l-4', 'border-yellow-500', 'pl-2');
+                listItem.innerHTML = `
+                    <span class="font-bold">#${index + 1}</span>
+                    <span class="text-xs text-gray-500 mr-1">(${report.rangeKm}km 반경)</span> 
+                    <span class="font-medium">${startDate} ~ ${endDate}</span>까지 소각 예정
+                `;
+                preReportList.appendChild(listItem);
+            });
+            
+            // 경고 모달 표시 (신고 전 주의 환기)
+            if (reports.length > 0) {
+                showModal("🚨 소각 예정 구역 확인", "주변에 소각 예정 정보가 있습니다. 신고 전 확인해 주세요.", false);
+            }
+        }
+
+
+        // GPS 위치 가져오기
+        function getLocation() {
+            statusEl.textContent = 'GPS 정보를 가져오는 중입니다...';
+            reportButton.disabled = true;
+            spinner.classList.remove('hidden');
+            buttonText.textContent = '위치 확인 중...';
+            statusEl.classList.add('animate-pulse');
+
+            if (!navigator.geolocation) {
+                showModal("오류", "이 브라우저는 GPS를 지원하지 않습니다.", true);
+                statusEl.textContent = '❌ GPS 미지원';
+                spinner.classList.add('hidden');
+                buttonText.textContent = '오류 발생';
+                statusEl.classList.remove('animate-pulse');
+                return;
+            }
+
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    currentLat = position.coords.latitude;
+                    currentLon = position.coords.longitude;
+                    
+                    latEl.textContent = currentLat.toFixed(6);
+                    lonEl.textContent = currentLon.toFixed(6);
+                    statusEl.textContent = '✅ 위치 확인 완료!';
+                    latLonEl.classList.remove('hidden');
+                    
+                    initMap(currentLat, currentLon); 
+                    
+                    reportButton.disabled = false;
+                    spinner.classList.add('hidden');
+                    buttonText.textContent = '지금 불법 소각 신고하기';
+                    statusEl.classList.remove('animate-pulse');
+                },
+                (error) => {
+                    console.error("Geolocation Error:", error);
+                    let message = "위치를 가져올 수 없습니다. GPS가 켜져 있는지 확인해 주세요.";
+                    if (error.code === error.PERMISSION_DENIED) {
+                        message = "위치 정보 접근이 거부되었습니다. 브라우저 설정을 확인해 주세요.";
+                    }
+                    // GPS 실패 시 임시 위치로 지도 초기화
+                    initMap(37.4526, 127.1309); // 가천대 기준
+                    
+                    showModal("위치 오류", message, true);
+                    statusEl.textContent = '❌ 위치 확인 실패 (가천대 기준 탐색 모드)';
+                    spinner.classList.add('hidden');
+                    buttonText.textContent = '위치 확인 후 신고하기';
+                    reportButton.disabled = true; // GPS가 없으면 신고 버튼 비활성화 유지
+                    statusEl.classList.remove('animate-pulse');
+                },
+                {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 0
+                }
+            );
+        }
+
+        // 데이터 전송 함수
+        async function sendReport() {
+            if (currentLat === null || currentLon === null) {
+                showModal("오류", "먼저 GPS 위치를 확인해야 신고가 가능합니다.", true);
+                return;
+            }
+
+            reportButton.disabled = true;
+            spinner.classList.remove('hidden');
+            buttonText.textContent = '신고 전송 중...';
+
+            const payload = {
+                lat: currentLat,
+                lon: currentLon,
+                time: Date.now()
+            };
+
+            try {
+                const response = await fetch(VERCEL_API_ENDPOINT_REPORT, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.ok) {
+                    showModal("✅ 신고 성공", "불법 소각 신고가 성공적으로 접수되었습니다. 감사합니다.", false);
+                    statusEl.textContent = '✅ 신고 완료됨';
+                } else {
+                    const errorData = await response.json();
+                    showModal("❌ 서버 오류", `신고 전송에 실패했습니다. (코드: ${response.status})`, true);
+                    statusEl.textContent = '❌ 신고 실패';
+                }
+            } catch (error) {
+                console.error('Network or Fetch Error:', error);
+                showModal("❌ 네트워크 오류", "서버와 통신할 수 없습니다. 인터넷 연결을 확인해 주세요.", true);
+                statusEl.textContent = '❌ 신고 실패';
+            } finally {
+                spinner.classList.add('hidden');
+                reportButton.disabled = false; // 다시 활성화
+                buttonText.textContent = '지금 불법 소각 신고하기';
+            }
+        }
+
+        // 이벤트 리스너 등록
+        reportButton.addEventListener('click', sendReport);
+        refreshButton.addEventListener('click', getLocation);
+
+        // 앱 시작 시 위치 가져오기
+        window.onload = getLocation;
+    </script>
+</body>
+</html>
