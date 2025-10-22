@@ -12,44 +12,25 @@ try {
         throw new Error("FIREBASE_PRIVATE_KEY 환경 변수가 설정되지 않았습니다. Vercel 설정을 확인하세요.");
     }
 
+    // JSON 문자열을 객체로 파싱
     serviceAccount = JSON.parse(privateKeyString);
     console.log("✅ 1. JSON.parse 성공. 서비스 계정 객체 생성됨.");
 
+    // 🚨🚨🚨 치명적인 오류 수정 지점: private_key PEM 형식 교정 🚨🚨🚨
     if (serviceAccount.private_key && typeof serviceAccount.private_key === 'string') {
-        const key = serviceAccount.private_key;
-
-        const HEADER = '-----BEGIN PRIVATE KEY-----';
-        const FOOTER = '-----END PRIVATE KEY-----';
-
-        const PEM_REGEX = new RegExp(`^\\s*${HEADER}\\s*([\\s\\S]*?)\\s*${FOOTER}\\s*$`);
-        const match = key.match(PEM_REGEX);
-
-        if (match && match[1]) {
-            console.log("✅ 2. PEM Header/Footer 정규식 매칭 성공.");
-            
-            let cleanBase64Data = match[1].replace(/[^a-zA-Z0-9+/=]/g, '');
-
-            while (cleanBase64Data.length % 4 !== 0) {
-                cleanBase64Data += '=';
-            }
-            
-            serviceAccount.private_key =
-                `${HEADER}\n` +
-                cleanBase64Data +
-                `\n${FOOTER}`;
-            
-            console.log(`✅ 3. Private Key Base64 데이터 클리닝 및 재조립 성공.`);
-            
-        } else {
-            console.error("❌ Critical: Private key headers/footers not found.");
-            throw new Error("Private Key structure is invalid (missing BEGIN/END markers).");
-        }
+        // Vercel 환경 변수에서는 "\\n" 형태로 저장되므로, 이를 실제 개행 문자 '\n'으로 변환해야 합니다.
+        // 이 로직은 `FUNCTION_INVOCATION_FAILED` 오류를 발생시키는 핵심 원인을 해결합니다.
+        serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+        console.log("✅ 2. Private Key 내의 \\n 이스케이프 문자 실제 개행문자로 변환 완료.");
     }
 
 } catch (error) {
     console.error("🚨 Firebase Key 파싱 또는 PEM 형식 오류:", error.message);
     console.error("Vercel 환경 변수 'FIREBASE_PRIVATE_KEY' 값이 올바른 전체 JSON 객체인지 확인해주세요.");
 }
+
+const app = express(); // Express 앱은 초기화 확인 전에 생성
+app.use(express.json());
 
 // 2. Firebase Admin SDK 초기화
 if (serviceAccount && admin.apps.length === 0) {
@@ -61,6 +42,7 @@ if (serviceAccount && admin.apps.length === 0) {
         isFirebaseInitialized = true;
         console.log(`🚀 Firebase Admin SDK 초기화 성공 (Project: ${serviceAccount.project_id})`);
     } catch(initError) {
+        // 초기화에 실패했더라도 서버가 Crash 되지 않도록 오류를 기록합니다.
         console.error('🔥 Firebase Admin SDK 초기화 중 최종 실패 (Admin SDK 오류):', initError.message);
     }
 } else if (admin.apps.length > 0) {
@@ -69,19 +51,17 @@ if (serviceAccount && admin.apps.length === 0) {
 }
 
 const db = isFirebaseInitialized ? admin.firestore() : null;
-const app = express();
-
-app.use(express.json());
 
 /**
  * 💡 Firebase 초기화 확인 미들웨어: 초기화 실패 시 500 오류 반환
  */
 app.use((req, res, next) => {
     if (!isFirebaseInitialized || !db) {
-        console.error('🚨 API 호출 거부: Firebase Admin SDK 초기화 실패 상태.');
+        console.error('🚨 API 호출 거부: Firebase Admin SDK 초기화 실패 상태. 키 확인이 필요합니다.');
+        // 이 오류 메시지를 통해 사용자가 Vercel 환경 변수 문제를 진단할 수 있도록 안내
         return res.status(500).json({ 
-            error: "서버 설정 오류 (Firebase)", 
-            message: "백엔드 서버가 Firebase 인증에 실패하여 데이터를 불러올 수 없습니다. Vercel 로그를 확인하여 FIREBASE_PRIVATE_KEY 환경 변수 오류를 해결해야 합니다." 
+            error: "서버 설정 오류 (Firebase Admin Key)", 
+            message: "백엔드 서버가 Firebase 인증에 실패하여 데이터를 불러올 수 없습니다. Vercel의 환경 변수(FIREBASE_PRIVATE_KEY) 설정이 올바른지 확인해주세요. 키의 PEM 포맷에 문제가 있을 수 있습니다."
         });
     }
     next();
@@ -121,7 +101,7 @@ app.get('/api/data', async (req, res) => {
 
 /**
  * 💡 POST /api/add/sensor: 직접 감지 값 (시뮬레이션) 저장
- * 🚨 수정: lat, lon, smoke, temp를 명시적으로 숫자로 변환 (parseFloat)
+ * 수정: lat, lon, smoke, temp를 명시적으로 숫자로 변환 (parseFloat)
  */
 app.post('/api/add/sensor', async (req, res) => {
     try {
@@ -131,10 +111,10 @@ app.post('/api/add/sensor', async (req, res) => {
         }
         
         const newDoc = {
-            lat: parseFloat(lat), // 🚨 수정
-            lon: parseFloat(lon), // 🚨 수정
-            smoke: parseFloat(smoke), // 🚨 수정
-            temp: parseFloat(temp), // 🚨 수정
+            lat: parseFloat(lat), // 숫자로 변환
+            lon: parseFloat(lon), // 숫자로 변환
+            smoke: parseFloat(smoke), // 숫자로 변환
+            temp: parseFloat(temp), // 숫자로 변환
             humidity: parseFloat(humidity || 0), 
             time: parseInt(time) || Date.now(),
             createdAt: admin.firestore.FieldValue.serverTimestamp()
@@ -152,7 +132,7 @@ app.post('/api/add/sensor', async (req, res) => {
 
 /**
  * 💡 POST /api/add/citizen: 시민 신고 값 저장
- * 🚨 수정: lat, lon을 명시적으로 숫자로 변환 (parseFloat)
+ * 수정: lat, lon을 명시적으로 숫자로 변환 (parseFloat)
  */
 app.post('/api/add/citizen', async (req, res) => {
     try {
@@ -162,8 +142,8 @@ app.post('/api/add/citizen', async (req, res) => {
         }
         
         const newDoc = {
-            lat: parseFloat(lat), // 🚨 수정
-            lon: parseFloat(lon), // 🚨 수정
+            lat: parseFloat(lat), // 숫자로 변환
+            lon: parseFloat(lon), // 숫자로 변환
             time: parseInt(time) || Date.now(),
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         };
@@ -180,7 +160,7 @@ app.post('/api/add/citizen', async (req, res) => {
 
 /**
  * 💡 POST /api/add/pre: 소각 사전 신고 정보 저장
- * 🚨 수정: lat, lon, rangeKm을 명시적으로 숫자로 변환 (parseFloat)
+ * 수정: lat, lon, rangeKm을 명시적으로 숫자로 변환 (parseFloat)
  */
 app.post('/api/add/pre', async (req, res) => {
     try {
@@ -190,11 +170,11 @@ app.post('/api/add/pre', async (req, res) => {
         }
         
         const newDoc = {
-            lat: parseFloat(lat), // 🚨 수정
-            lon: parseFloat(lon), // 🚨 수정
+            lat: parseFloat(lat), // 숫자로 변환
+            lon: parseFloat(lon), // 숫자로 변환
             startDate: parseInt(startDate),
             endDate: parseInt(endDate),
-            rangeKm: parseFloat(rangeKm || 0.1),
+            rangeKm: parseFloat(rangeKm || 0.1), // 숫자로 변환
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         };
 
@@ -208,3 +188,4 @@ app.post('/api/add/pre', async (req, res) => {
 });
 
 module.exports = app;
+
