@@ -55,7 +55,7 @@
             margin-top: 20px;
         }
         .report-btn:hover { background-color: #dc2626; }
-        .report-btn:disabled { opacity: 0.5; cursor: not-allowed; } /* 비활성화 상태 추가 */
+        .report-btn:disabled { opacity: 0.5; cursor: not-allowed; } 
         
         .refresh-btn {
             background-color: #3b82f6; 
@@ -65,6 +65,17 @@
             margin-top: 10px;
         }
         .refresh-btn:hover { background-color: #2563eb; }
+        
+        /* 신고 목록 상태바 스타일 */
+        #report-count-box {
+            background-color: #ecfdf5;
+            color: #065f46;
+            padding: 10px;
+            border-radius: 8px;
+            margin-top: 10px;
+            font-weight: 700;
+            text-align: center;
+        }
 
 
         #message-box {
@@ -85,6 +96,7 @@
         #message-box .icon { font-size: 3rem; margin-bottom: 10px; }
         #message-box .msg-btn { 
             background-color: #3b82f6; 
+            color: white; /* 버튼 색상 추가 */
             margin-top: 15px;
             padding: 10px;
         }
@@ -104,6 +116,11 @@
         </div>
 
         <div id="map"></div>
+        
+        <!-- 주변 신고 정보 표시 섹션 추가 -->
+        <div id="report-count-box">
+            🔥 주변 소각 신고 정보: <span id="report-count">0</span>건
+        </div>
 
         <div class="report-section">
             <h2>🔥 불법 소각 신고하기</h2>
@@ -123,14 +140,17 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // 시민 신고 API 엔드포인트는 /api/add/citizen 입니다.
-        const API_ENDPOINT = "/api/add/citizen"; 
+        // API 엔드포인트 정의
+        const API_ADD_ENDPOINT = "/api/add/citizen"; // 신고 제출
+        const API_GET_ENDPOINT = "/api/get/citizens"; // 신고 목록 조회
+        
         const INITIAL_VIEW = [37.5665, 126.9780]; // 서울 시청
         const INITIAL_ZOOM = 14;
 
         let map = null;
         let centerMarker = null;
-        let isSubmitting = false; // 중복 제출 방지 플래그
+        let isSubmitting = false; 
+        let reportMarkers = L.layerGroup(); // 신고 마커들을 관리할 레이어 그룹
 
         /** 메시지 박스를 띄웁니다 (alert 대체) */
         function showMessageBox(message, type = 'info') {
@@ -138,7 +158,6 @@
             const icon = document.getElementById('msg-icon');
             const text = document.getElementById('msg-text');
             
-            // 메시지 텍스트를 HTML 대신 innerText로 설정하여 보안 및 포맷 유지
             text.innerText = message; 
             
             if (type === 'success') {
@@ -152,7 +171,7 @@
                 icon.style.color = '#3b82f6';
             }
 
-            box.style.display = 'flex';
+            box.style.display = 'block';
         }
 
         /** 메시지 박스를 닫습니다 */
@@ -168,10 +187,16 @@
                     attribution: '&copy; OpenStreetMap contributors'
                 }).addTo(map);
 
+                // 신고 마커 레이어 그룹을 지도에 추가
+                reportMarkers.addTo(map);
+
                 centerMarker = L.marker(map.getCenter()).addTo(map);
 
-                // 지도가 움직일 때마다 위치 업데이트
-                map.on('moveend', updateCenterLocation);
+                // 지도가 움직일 때마다 위치 업데이트 및 신고 목록 새로고침
+                map.on('moveend', () => {
+                    updateCenterLocation();
+                    fetchAndDisplayReports(); // 지도가 움직일 때마다 데이터 로드
+                });
             }
             
             // 초기 위치 설정 및 업데이트
@@ -181,13 +206,16 @@
                     const lon = position.coords.longitude;
                     map.setView([lat, lon], INITIAL_ZOOM);
                     updateCenterLocation();
+                    fetchAndDisplayReports(); // 위치 로드 후 데이터 로드
                 }, () => {
                     showMessageBox("위치 정보를 가져오는데 실패했습니다. 기본 위치로 설정됩니다.", 'error');
                     updateCenterLocation();
+                    fetchAndDisplayReports(); // 위치 로드 실패해도 기본 위치에서 데이터 로드
                 });
             } else {
                 // 새로고침 버튼을 눌렀거나 Geolocation이 없는 경우
                 updateCenterLocation();
+                fetchAndDisplayReports(); // 수동 새로고침 시 데이터 로드
             }
         }
 
@@ -202,9 +230,64 @@
             }
         }
 
+        /** 서버에서 신고 목록을 가져와 지도에 표시합니다. */
+        async function fetchAndDisplayReports() {
+            const center = map.getCenter();
+            const bounds = map.getBounds();
+            
+            // 지도의 현재 경계를 기준으로 데이터를 요청합니다.
+            const url = `${API_GET_ENDPOINT}?minLat=${bounds.getSouth()}&maxLat=${bounds.getNorth()}&minLon=${bounds.getWest()}&maxLon=${bounds.getEast()}`;
+            
+            try {
+                const response = await fetch(url);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP 오류! 상태: ${response.status}`);
+                }
+                
+                const reports = await response.json();
+                displayReportsOnMap(reports);
+
+            } catch (error) {
+                console.error("신고 목록 조회 실패:", error);
+                document.getElementById('report-count-box').innerHTML = `⚠️ 주변 신고 조회 실패: ${error.message.substring(0, 50)}...`;
+                // 신고 목록 조회는 치명적이지 않으므로 메시지 박스는 띄우지 않습니다.
+            }
+        }
+        
+        /** 받아온 신고 데이터를 지도에 마커로 표시합니다. */
+        function displayReportsOnMap(reports) {
+            reportMarkers.clearLayers(); // 기존 마커 모두 제거
+            
+            const reportCountElement = document.getElementById('report-count');
+            reportCountElement.innerText = reports.length;
+            
+            const fireIcon = L.divIcon({
+                className: 'fire-icon',
+                html: '🔥', // 불꽃 이모지 사용
+                iconSize: [20, 20]
+            });
+
+            reports.forEach(report => {
+                const lat = parseFloat(report.lat);
+                const lon = parseFloat(report.lon);
+                const time = new Date(report.time).toLocaleString('ko-KR', {
+                    year: 'numeric', month: '2-digit', day: '2-digit', 
+                    hour: '2-digit', minute: '2-digit'
+                });
+
+                if (!isNaN(lat) && !isNaN(lon)) {
+                    L.marker([lat, lon], {icon: fireIcon})
+                        .bindPopup(`<b>불법 소각 신고</b><br>신고 시각: ${time}<br>위치: ${lat.toFixed(4)}, ${lon.toFixed(4)}`)
+                        .addTo(reportMarkers);
+                }
+            });
+        }
+
+
         /** 시민 신고 데이터를 Vercel API를 통해 전송합니다. */
         async function submitCitizenReport() {
-            if (isSubmitting) return; // 중복 제출 방지
+            if (isSubmitting) return; 
 
             const submitBtn = document.getElementById('submit-btn');
             submitBtn.disabled = true;
@@ -229,8 +312,7 @@
             showMessageBox("신고 접수 중...", 'info');
 
             try {
-                // Fetch API를 사용하여 API_ENDPOINT로 POST 요청 전송
-                const response = await fetch(API_ENDPOINT, {
+                const response = await fetch(API_ADD_ENDPOINT, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -238,27 +320,24 @@
                     body: JSON.stringify(payload)
                 });
 
-                closeMessageBox(); // 로딩 메시지 닫기
+                closeMessageBox(); 
 
                 if (response.ok) {
                     const result = await response.json();
                     showMessageBox(`✅ 신고 성공! (ID: ${result.id})\n관리자가 확인 후 처리 예정입니다.`, 'success');
+                    fetchAndDisplayReports(); // 성공 후 신고 목록을 새로고침합니다.
                 } else {
-                    // 🚨 서버가 4xx 또는 5xx 응답을 보냈을 때 처리
                     let errorDetails = `[HTTP Status: ${response.status}] 서버 오류`;
                     try {
                         const errorData = await response.json();
-                        // index.js에서 설정한 상세 에러 메시지 확인 (Firebase 초기화 실패 등)
                         errorDetails = errorData.message || errorData.error || errorDetails;
                     } catch (e) {
-                        // JSON 파싱 실패 (서버가 HTML이나 일반 텍스트를 보낸 경우)
                         errorDetails = `[HTTP Status: ${response.status}] 서버 응답을 읽을 수 없습니다. Vercel 로그를 확인하세요.`;
                     }
                     
                     showMessageBox(`❌ 신고 실패: ${errorDetails}`, 'error');
                 }
             } catch (error) {
-                // 🚨 네트워크 연결 자체가 안 될 때 (DNS 실패, CORS 차단, 서버 다운 등)
                 console.error("Fetch Error:", error);
                 showMessageBox("❌ 네트워크 연결 오류: 서버와 통신할 수 없습니다.\n인터넷 연결 및 Vercel 배포 상태(API 서버)를 확인하세요.", 'error');
             } finally {
