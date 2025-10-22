@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>불법 소각 감지 지도</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
@@ -90,7 +91,7 @@
         }
         .modal-content h2 { margin-top: 0; border-bottom: 2px solid #eee; padding-bottom: 10px; }
         .modal-content label, .modal-content input { display: block; width: 100%; margin-bottom: 10px; }
-        .modal-content input[type="number"], .modal-content input[type="date"] { padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        .modal-content input[type="number"], .modal-content input[type="date"], .modal-content input[type="datetime-local"] { padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
         .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
         .modal-actions button { padding: 8px 15px; border-radius: 4px; cursor: pointer; }
     </style>
@@ -107,13 +108,14 @@
     <div id="map"></div>
 
     <div id="info-panel" class="info-panel">
-        <p><b>선택 위치:</b></p>
+        <p><b>선택 위치 (드래그 가능):</b></p>
         <p id="current-coords">지도를 클릭해 주세요.</p>
         <hr>
         <div class="legend">
             <p>● 직접 감지 / ▲ 시민 신고</p>
             <span style="color: #ff8c00;">■ 신고O (주황색)</span>
             <span style="color: #dc2626;">■ 신고X (빨간색)</span>
+            <span style="color: #f59e0b;">⬤ 사전 신고 구역</span>
         </div>
     </div>
     
@@ -135,17 +137,22 @@
     <script src="https://unpkg.com/leaflet.markercluster@1.5.1/dist/leaflet.markercluster.js"></script>
     
     <script>
+        // Leaflet 지도 초기화
         const map = L.map('map').setView([37.5665, 126.9780], 12); 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '&copy; OpenStreetMap contributors'
         }).addTo(map);
 
+        // 마커 클러스터 그룹 초기화
         const markers = L.markerClusterGroup();
         map.addLayer(markers);
 
+        // 사전 신고 구역 레이어 그룹 (클러스터와 별도로 관리)
+        const preReportLayers = L.layerGroup().addTo(map);
+
         let currentInputType = null;
         let selectedCoords = null;
-        let tempMarker = null; // 임시 마커
+        let tempMarker = null; 
 
         // DOM 요소 캐시
         const currentCoordsEl = document.getElementById('current-coords');
@@ -158,7 +165,7 @@
 
 
         // ---------------------------------------------------------------------
-        // 1. 커스텀 아이콘 팩토리 (이전 코드와 동일)
+        // 1. 커스텀 아이콘 팩토리
         // ---------------------------------------------------------------------
 
         const createCircleIcon = (color) => L.divIcon({
@@ -179,23 +186,37 @@
 
 
         // ---------------------------------------------------------------------
-        // 2. 지도 클릭 및 입력 상태 관리
+        // 2. 지도 클릭 및 드래그 로직 (수정됨)
         // ---------------------------------------------------------------------
 
-        map.on('click', (e) => {
-            const lat = e.latlng.lat.toFixed(6);
-            const lon = e.latlng.lng.toFixed(6);
+        function updateSelectedPosition(latlng) {
+            const lat = latlng.lat.toFixed(6);
+            const lon = latlng.lng.toFixed(6);
             selectedCoords = { lat: parseFloat(lat), lon: parseFloat(lon) };
-            
             currentCoordsEl.innerHTML = `위도: ${lat}, 경도: ${lon}`;
+        }
 
-            // 임시 마커 표시
+        map.on('click', (e) => {
+            // 위치 업데이트
+            updateSelectedPosition(e.latlng);
+
+            // 임시 마커 표시 또는 업데이트
             if (tempMarker) {
                 map.removeLayer(tempMarker);
             }
+            
+            // 임시 마커 생성 (드래그 가능하도록 설정)
             tempMarker = L.marker(selectedCoords, {
+                draggable: true, // 드래그 가능
                 icon: L.divIcon({ className: 'current-selection', html: '<i class="fas fa-map-marker-alt" style="color:#007bff; font-size:24px;"></i>' })
             }).addTo(map);
+
+            // 드래그 종료 시 위치 업데이트 이벤트 리스너 추가
+            tempMarker.on('dragend', function(event) {
+                const marker = event.target;
+                const position = marker.getLatLng();
+                updateSelectedPosition(position);
+            });
 
             // 입력 모드라면 모달 열기
             if (currentInputType) {
@@ -213,13 +234,13 @@
                 currentInputType = null; 
             } else {
                 // 위치가 선택되지 않은 경우 메시지 표시
-                alert('지도에서 위치를 먼저 클릭해 주세요.');
+                showCustomAlert('지도에서 위치를 먼저 클릭해 주세요.');
             }
         }
 
 
         // ---------------------------------------------------------------------
-        // 3. 모달 및 폼 생성 로직
+        // 3. 모달 및 폼 생성 로직 (사전 신고 폼에 datetime-local 추가)
         // ---------------------------------------------------------------------
 
         function openModal(type) {
@@ -248,11 +269,16 @@
                 `;
             } else if (type === 'pre-report') {
                 title = '소각 사전 신고';
+                // datetime-local의 기본값으로 현재 시각 설정 (UTC 기준이 아닌 로컬 시각)
+                const now = new Date();
+                const offset = now.getTimezoneOffset() * 60000; // Timezone offset in milliseconds
+                const localISOTime = (new Date(now - offset)).toISOString().slice(0, 16);
+
                 formHtml = `
                     <label for="pre-report-start">소각 시작 날짜/시간:</label>
-                    <input type="datetime-local" id="pre-report-start" required>
+                    <input type="datetime-local" id="pre-report-start" value="${localISOTime}" required>
                     <label for="pre-report-end">소각 종료 날짜/시간:</label>
-                    <input type="datetime-local" id="pre-report-end" required>
+                    <input type="datetime-local" id="pre-report-end" value="${localISOTime}" required>
                     <label for="pre-report-range">소각 반경 (km):</label>
                     <input type="number" id="pre-report-range" value="0.5" min="0.1" step="0.1" required>
                 `;
@@ -270,8 +296,9 @@
             modalStatusEl.style.display = 'none';
         }
 
+
         // ---------------------------------------------------------------------
-        // 4. 데이터 전송 (POST 요청) 로직
+        // 4. 데이터 전송 (POST 요청) 로직 (변동 없음)
         // ---------------------------------------------------------------------
 
         async function submitData(type) {
@@ -295,7 +322,7 @@
                     smoke: parseFloat(smoke), 
                     temp: parseFloat(temp), 
                     time: Date.now(),
-                    humidity: 60 // 임의의 값 추가
+                    humidity: 60 
                 };
                 endpoint = '/api/add/sensor';
             } else if (type === 'citizen') {
@@ -307,8 +334,11 @@
                 const range = document.getElementById('pre-report-range').value;
                 if (!startTimeStr || !endTimeStr || !range) { return updateStatus('error', '모든 필드를 입력해 주세요.'); }
                 
+                // ISO 문자열을 UTC 기준으로 파싱 후 getTime()으로 Unix Milliseconds 얻음
                 const startDate = new Date(startTimeStr).getTime();
                 const endDate = new Date(endTimeStr).getTime();
+                
+                if (endDate <= startDate) { return updateStatus('error', '종료 시각은 시작 시각보다 늦어야 합니다.'); }
 
                 payload = { 
                     ...payload, 
@@ -332,35 +362,27 @@
                 if (!response.ok) {
                     let errorMessage = `API 등록 실패 (${response.status} ${response.statusText})`;
                     
-                    // JSON.parse 오류를 방지하기 위해 응답 본문을 안전하게 처리합니다.
                     try {
                         const errorText = await response.text();
                         if (errorText) {
-                            // JSON 파싱을 시도하고, 실패하면 텍스트 그대로 사용
                             try {
                                 const errorData = JSON.parse(errorText);
-                                // 오류 메시지가 구조화되어 있으면 추출
                                 errorMessage = errorData.error || errorData.message || JSON.stringify(errorData);
                             } catch (e) {
-                                // JSON 파싱 실패 시, 텍스트 자체를 오류 메시지로 사용 (길이 제한)
                                 errorMessage = errorText.substring(0, 200); 
                             }
                         } else {
-                            // 본문이 비어 있는 경우, 상태 텍스트를 사용
                             errorMessage = response.statusText || '응답 본문 없음';
                         }
                     } catch (e) {
-                        // 응답 본문을 읽는 데 실패한 경우
                         errorMessage = `응답 본문 읽기 오류. 상태 코드: ${response.status}`;
                     }
 
-                    // 최종 오류 메시지로 예외 발생
                     throw new Error(errorMessage);
                 }
 
                 updateStatus('success', `${modalTitleEl.textContent}이(가) 성공적으로 등록되었습니다!`);
                 
-                // 데이터 등록 후 1초 뒤에 모달 닫고 지도 새로고침
                 setTimeout(() => {
                     closeModal();
                     loadAndDisplayData();
@@ -377,14 +399,31 @@
             modalStatusEl.textContent = message;
         }
 
+        function showCustomAlert(message) {
+            let box = document.getElementById('custom-alert');
+            if (!box) {
+                box = document.createElement('div');
+                box.id = 'custom-alert';
+                box.style.cssText = `
+                    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                    padding: 20px; background: #fff; border: 1px solid #ccc; border-radius: 8px;
+                    box-shadow: 0 4px 10px rgba(0,0,0,0.2); z-index: 9999; text-align: center;
+                    min-width: 250px; font-size: 1rem;
+                `;
+                box.innerHTML = `<p id="alert-text" style="margin-bottom: 10px;"></p><button onclick="document.getElementById('custom-alert').style.display='none';" style="padding: 5px 15px; background-color: #dc2626; color: white; border: none; border-radius: 5px; cursor: pointer;">확인</button>`;
+                document.body.appendChild(box);
+            }
+            document.getElementById('alert-text').innerText = message;
+            box.style.display = 'block';
+        }
+
 
         // ---------------------------------------------------------------------
-        // 5. 시각화 로직 (이전 코드와 동일, isInPreReport 함수는 map 스크립트 외부로 이동)
+        // 5. 시각화 로직 (사전 신고 범위 표시 추가)
         // ---------------------------------------------------------------------
         
-        // 이 함수는 서버에서 받은 preReports 데이터를 기반으로 마커의 색상을 결정합니다.
         const isInPreReport = (lat, lon, time, preReports) => {
-            const currentTime = time; // time은 Unix Time Milliseconds
+            const currentTime = time; 
             
             for (const report of preReports) {
                 const radiusKm = report.rangeKm || 0.1;
@@ -393,8 +432,12 @@
                 const startTime = report.startDate; 
                 const endTime = report.endDate; 
                 
+                // 시간 체크
+                const isWithinTime = currentTime >= startTime && currentTime <= endTime;
+                if (!isWithinTime) continue;
+
                 // Haversine 공식 (대략적인 거리 계산)
-                const R = 6371; 
+                const R = 6371; // 지구 반경 (km)
                 const dLat = (lat - centerLat) * (Math.PI / 180);
                 const dLon = (lon - centerLon) * (Math.PI / 180);
 
@@ -404,10 +447,9 @@
                 const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
                 const distanceKm = R * c;
 
-                const isWithinTime = currentTime >= startTime && currentTime <= endTime;
                 const isWithinRange = distanceKm <= radiusKm;
                 
-                if (isWithinTime && isWithinRange) {
+                if (isWithinRange) {
                     return true;
                 }
             }
@@ -425,7 +467,41 @@
                 const sensorData = allData.sensorData || [];
                 const citizenReports = allData.citizenReports || [];
                 
+                // 이전 마커/레이어 초기화
                 markers.clearLayers(); 
+                preReportLayers.clearLayers(); // 사전 신고 구역 초기화
+
+                // C. 사전 신고 데이터 (preReports) 시각화 (추가된 기능)
+                preReports.forEach(report => {
+                    const radiusMeters = report.rangeKm * 1000;
+                    
+                    // 원 (Circle) 레이어 생성: 반경(미터), 색상, 투명도 설정
+                    const circle = L.circle([report.lat, report.lon], {
+                        radius: radiusMeters,
+                        color: '#f59e0b', // Amber
+                        fillColor: '#fcd34d', // Light Amber
+                        fillOpacity: 0.3,
+                        weight: 2
+                    }).addTo(preReportLayers);
+
+                    // 팝업 내용 설정 (시간 범위 포함)
+                    const startDateStr = new Date(report.startDate).toLocaleString('ko-KR');
+                    const endDateStr = new Date(report.endDate).toLocaleString('ko-KR');
+
+                    circle.bindPopup(`
+                        <b>[사전 신고 구역]</b><br>
+                        <b>반경:</b> ${report.rangeKm} km<br>
+                        <b>시작 시각:</b> ${startDateStr}<br>
+                        <b>종료 시각:</b> ${endDateStr}
+                    `);
+
+                    // 핀 마커도 함께 표시 (중심점)
+                    L.marker([report.lat, report.lon], {
+                        icon: L.divIcon({ className: 'pre-report-center', html: '<i class="fas fa-flag" style="color:#f59e0b; font-size:18px;"></i>' })
+                    }).bindPopup(`<b>사전 신고 중심</b><br>반경: ${report.rangeKm} km`).addTo(preReportLayers);
+
+                });
+
 
                 // A. 직접 감지 데이터 (sensorData) 처리
                 sensorData.forEach(row => {
