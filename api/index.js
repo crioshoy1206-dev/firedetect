@@ -1,177 +1,204 @@
-import express from 'express';
-import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, addDoc, query, where, orderBy } from 'firebase/firestore';
-import { getAuth, signInWithCustomToken, signInAnonymously } from 'firebase/auth';
-import cors from 'cors';
+const express = require('express');
+const admin = require('firebase-admin');
 
-const app = express();
-app.use(express.json());
-app.use(cors());
+// 1. Firebase 서비스 계정 키 파싱 및 환경 변수 검증
+let serviceAccount;
+let isFirebaseInitialized = false;
 
-// --- ⚠️ 필수 전역 변수 초기화 ---
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+try {
+    const privateKeyString = process.env.FIREBASE_PRIVATE_KEY;
 
-// Firebase 초기화
-const firebaseApp = initializeApp(firebaseConfig);
-const db = getFirestore(firebaseApp);
-const auth = getAuth(firebaseApp);
+    if (!privateKeyString) {
+        throw new Error("FIREBASE_PRIVATE_KEY 환경 변수가 설정되지 않았습니다. Vercel 설정을 확인하세요.");
+    }
 
-// 사용자 인증 및 초기화 함수
-const authenticate = async () => {
-    try {
-        if (initialAuthToken) {
-            await signInWithCustomToken(auth, initialAuthToken);
+    serviceAccount = JSON.parse(privateKeyString);
+    console.log("✅ 1. JSON.parse 성공. 서비스 계정 객체 생성됨.");
+
+    if (serviceAccount.private_key && typeof serviceAccount.private_key === 'string') {
+        const key = serviceAccount.private_key;
+
+        const HEADER = '-----BEGIN PRIVATE KEY-----';
+        const FOOTER = '-----END PRIVATE KEY-----';
+
+        const PEM_REGEX = new RegExp(`^\\s*${HEADER}\\s*([\\s\\S]*?)\\s*${FOOTER}\\s*$`);
+        const match = key.match(PEM_REGEX);
+
+        if (match && match[1]) {
+            console.log("✅ 2. PEM Header/Footer 정규식 매칭 성공.");
+            
+            let cleanBase64Data = match[1].replace(/[^a-zA-Z0-9+/=]/g, '');
+
+            while (cleanBase64Data.length % 4 !== 0) {
+                cleanBase64Data += '=';
+            }
+            
+            serviceAccount.private_key =
+                `${HEADER}\n` +
+                cleanBase64Data +
+                `\n${FOOTER}`;
+            
+            console.log(`✅ 3. Private Key Base64 데이터 클리닝 및 재조립 성공.`);
+            
         } else {
-            await signInAnonymously(auth);
+            console.error("❌ Critical: Private key headers/footers not found.");
+            throw new Error("Private Key structure is invalid (missing BEGIN/END markers).");
         }
-        console.log("Firebase Auth initialized successfully.");
-    } catch (error) {
-        console.error("Firebase authentication error:", error);
     }
-};
 
-authenticate(); 
+} catch (error) {
+    console.error("🚨 Firebase Key 파싱 또는 PEM 형식 오류:", error.message);
+    console.error("Vercel 환경 변수 'FIREBASE_PRIVATE_KEY' 값이 올바른 전체 JSON 객체인지 확인해주세요.");
+}
 
-// ------------------------------------------------------------------
-// 1. 공통 데이터베이스 경로 설정
-// ------------------------------------------------------------------
-
-// 모든 사용자가 데이터를 공유하는 공용 데이터 경로를 사용합니다.
-const getCollectionPath = (collectionName) => {
-    return `artifacts/${appId}/public/data/${collectionName}`;
-};
-
-const SENSOR_COLLECTION = getCollectionPath('sensorData');
-const CITIZEN_COLLECTION = getCollectionPath('citizenReports');
-const PRE_REPORT_COLLECTION = getCollectionPath('preReports');
-
-// ------------------------------------------------------------------
-// 2. 데이터 등록 (POST) 엔드포인트
-// ------------------------------------------------------------------
-
-// POST /api/add/sensor: 직접 감지 데이터 추가
-app.post('/api/add/sensor', async (req, res) => {
+// 2. Firebase Admin SDK 초기화
+if (serviceAccount && admin.apps.length === 0) {
     try {
-        const data = { 
-            ...req.body, 
-            time: Date.now(), // 서버 시간으로 덮어쓰기
-            lat: parseFloat(req.body.lat),
-            lon: parseFloat(req.body.lon),
-            smoke: parseFloat(req.body.smoke),
-            temp: parseFloat(req.body.temp)
-        };
-        await addDoc(collection(db, SENSOR_COLLECTION), data);
-        res.status(201).json({ message: 'Sensor data added successfully' });
-    } catch (error) {
-        console.error("Error adding sensor data: ", error);
-        res.status(500).json({ error: 'Failed to add sensor data' });
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount),
+            databaseURL: `https://${serviceAccount.project_id}.firebaseio.com` 
+        });
+        isFirebaseInitialized = true;
+        console.log(`🚀 Firebase Admin SDK 초기화 성공 (Project: ${serviceAccount.project_id})`);
+    } catch(initError) {
+        console.error('🔥 Firebase Admin SDK 초기화 중 최종 실패 (Admin SDK 오류):', initError.message);
     }
-});
+} else if (admin.apps.length > 0) {
+    isFirebaseInitialized = true;
+    console.log("⚠️ Firebase Admin SDK는 이미 초기화되어 있습니다.");
+}
 
-// POST /api/add/citizen: 시민 신고 데이터 추가
-app.post('/api/add/citizen', async (req, res) => {
-    try {
-        const data = { 
-            ...req.body, 
-            time: Date.now(), // 서버 시간으로 덮어쓰기
-            lat: parseFloat(req.body.lat),
-            lon: parseFloat(req.body.lon)
-        };
-        // ⚠️ 여기서 citizenReports 컬렉션에 데이터가 정상적으로 저장되는지 확인해 주세요.
-        await addDoc(collection(db, CITIZEN_COLLECTION), data);
-        res.status(201).json({ message: 'Citizen report added successfully' });
-    } catch (error) {
-        console.error("Error adding citizen report: ", error);
-        res.status(500).json({ error: 'Failed to add citizen report' });
-    }
-});
+const db = isFirebaseInitialized ? admin.firestore() : null;
+const app = express();
 
-// POST /api/add/pre: 사전 신고 데이터 추가
-app.post('/api/add/pre', async (req, res) => {
-    try {
-        const data = { 
-            ...req.body, 
-            lat: parseFloat(req.body.lat),
-            lon: parseFloat(req.body.lon),
-            rangeKm: parseFloat(req.body.rangeKm),
-            startDate: req.body.startDate, // Unix Milliseconds
-            endDate: req.body.endDate // Unix Milliseconds
-        };
-        // ⚠️ 여기서 preReports 컬렉션에 데이터가 정상적으로 저장되는지 확인해 주세요.
-        await addDoc(collection(db, PRE_REPORT_COLLECTION), data);
-        res.status(201).json({ message: 'Pre-report added successfully' });
-    } catch (error) {
-        console.error("Error adding pre-report: ", error);
-        res.status(500).json({ error: 'Failed to add pre-report' });
-    }
-});
-
-
-// ------------------------------------------------------------------
-// 3. 데이터 조회 (GET) 엔드포인트 (핵심 수정 부분)
-// ------------------------------------------------------------------
+app.use(express.json());
 
 /**
- * GET /api/stream/sensor
- * 지도에 표시할 모든 데이터를 한 번에 가져옵니다. (센서, 시민 신고, 사전 신고)
+ * 💡 Firebase 초기화 확인 미들웨어: 초기화 실패 시 500 오류 반환
  */
-app.get('/api/stream/sensor', async (req, res) => {
+app.use((req, res, next) => {
+    if (!isFirebaseInitialized || !db) {
+        console.error('🚨 API 호출 거부: Firebase Admin SDK 초기화 실패 상태.');
+        return res.status(500).json({ 
+            error: "서버 설정 오류 (Firebase)", 
+            message: "백엔드 서버가 Firebase 인증에 실패하여 데이터를 불러올 수 없습니다. Vercel 로그를 확인하여 FIREBASE_PRIVATE_KEY 환경 변수 오류를 해결해야 합니다." 
+        });
+    }
+    next();
+});
+
+
+/**
+ * 💡 GET /api/data: 세 가지 컬렉션의 데이터를 모두 불러와 하나의 객체로 반환
+ */
+app.get('/api/data', async (req, res) => {
     try {
-        const timeLimit = Date.now() - (24 * 60 * 60 * 1000); // 24시간 이내 데이터만 조회
-
-        // 1. 센서 데이터 (sensorData) 조회
-        const sensorQuery = query(
-            collection(db, SENSOR_COLLECTION),
-            where('time', '>', timeLimit)
-            // orderBy('time', 'desc') // 성능 문제로 orderBy는 클라이언트에서 처리 권장
-        );
-        const sensorSnapshot = await getDocs(sensorQuery);
-        const sensorData = sensorSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-        // 2. 시민 신고 데이터 (citizenReports) 조회
-        // ⚠️ 이 부분이 핵심입니다. 컬렉션 경로가 정확하고 데이터가 존재하는지 확인!
-        const citizenQuery = query(
-            collection(db, CITIZEN_COLLECTION),
-            where('time', '>', timeLimit)
-        );
-        const citizenSnapshot = await getDocs(citizenQuery);
-        const citizenReports = citizenSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const [
+            sensorSnapshot, 
+            citizenSnapshot, 
+            preReportSnapshot
+        ] = await Promise.all([
+            db.collection('sensorData').get(),
+            db.collection('citizenReports').get(),
+            db.collection('preReports').get()
+        ]);
         
-        // 3. 사전 신고 데이터 (preReports) 조회
-        // ⚠️ 이 부분이 핵심입니다. 현재 유효한 사전 신고 (종료 시간 < 현재 시간)만 조회하는 쿼리
-        const preReportQuery = query(
-            collection(db, PRE_REPORT_COLLECTION),
-            where('endDate', '>', Date.now()) // 아직 종료되지 않은 신고만 가져옴
-        );
-        const preReportSnapshot = await getDocs(preReportQuery);
+        const sensorData = sensorSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const citizenReports = citizenSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         const preReports = preReportSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-
-        // 모든 데이터를 하나로 묶어 프론트엔드에 응답
-        res.status(200).json({
+        
+        res.json({
             sensorData,
-            citizenReports, // <--- 이 배열이 비어있다면 프론트엔드에 표시되지 않습니다.
-            preReports      // <--- 이 배열이 비어있다면 지도에 원이 표시되지 않습니다.
-        });
-
+            citizenReports,
+            preReports
+        }); 
     } catch (error) {
-        console.error("Error fetching all data (citizen, pre, sensor): ", error);
-        // 에러 발생 시 빈 배열을 반환하여 지도 작동은 유지하도록 처리
-        res.status(500).json({ 
-            error: 'Failed to fetch data', 
-            sensorData: [], 
-            citizenReports: [], 
-            preReports: [] 
-        });
+        console.error('🔥 Error fetching combined data from Firebase:', error);
+        res.status(500).json({ error: "Error fetching combined data from Firebase" });
     }
 });
 
-// ------------------------------------------------------------------
-// 4. 서버 시작
-// ------------------------------------------------------------------
-const PORT = 3000;
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+
+/**
+ * 💡 POST /api/add/sensor: 직접 감지 값 (시뮬레이션) 저장
+ */
+app.post('/api/add/sensor', async (req, res) => {
+    try {
+        const { lat, lon, smoke, temp, humidity, time } = req.body;
+        if (lat === undefined || lon === undefined || smoke === undefined || temp === undefined) {
+            return res.status(400).json({ error: "Missing required fields for sensor data" });
+        }
+        
+        const newDoc = {
+            lat, lon, 
+            smoke: parseFloat(smoke), 
+            temp: parseFloat(temp), 
+            humidity: parseFloat(humidity || 0), 
+            time: parseInt(time) || Date.now(),
+            createdAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+
+        const docRef = await db.collection('sensorData').add(newDoc);
+        res.status(201).json({ message: "Sensor data added", id: docRef.id });
+
+    } catch (error) {
+        console.error('🔥 Error adding sensor data:', error);
+        res.status(500).json({ error: "Error adding sensor data" });
+    }
 });
+
+
+/**
+ * 💡 POST /api/add/citizen: 시민 신고 값 저장
+ */
+app.post('/api/add/citizen', async (req, res) => {
+    try {
+        const { lat, lon, time } = req.body;
+        if (lat === undefined || lon === undefined) {
+            return res.status(400).json({ error: "Missing required fields for citizen report" });
+        }
+        
+        const newDoc = {
+            lat, lon, 
+            time: parseInt(time) || Date.now(),
+            createdAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+
+        const docRef = await db.collection('citizenReports').add(newDoc);
+        res.status(201).json({ message: "Citizen report added", id: docRef.id });
+
+    } catch (error) {
+        console.error('🔥 Error adding citizen report:', error);
+        res.status(500).json({ error: "Error adding citizen report" });
+    }
+});
+
+
+/**
+ * 💡 POST /api/add/pre: 소각 사전 신고 정보 저장
+ */
+app.post('/api/add/pre', async (req, res) => {
+    try {
+        const { lat, lon, startDate, endDate, rangeKm } = req.body;
+        if (lat === undefined || lon === undefined || startDate === undefined || endDate === undefined) {
+            return res.status(400).json({ error: "Missing required fields for pre-report" });
+        }
+        
+        const newDoc = {
+            lat, lon, 
+            startDate: parseInt(startDate),
+            endDate: parseInt(endDate),
+            rangeKm: parseFloat(rangeKm || 0.1),
+            createdAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+
+        const docRef = await db.collection('preReports').add(newDoc);
+        res.status(201).json({ message: "Pre-report added", id: docRef.id });
+
+    } catch (error) {
+        console.error('🔥 Error adding pre-report:', error);
+        res.status(500).json({ error: "Error adding pre-report" });
+    }
+});
+
+module.exports = app;
