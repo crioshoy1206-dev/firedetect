@@ -1,547 +1,245 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>불법 소각 감지 지도</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-    
-    <style>
-        body { margin: 0; font-family: 'Noto Sans KR', sans-serif; display: flex; flex-direction: column; height: 100vh; }
-        h1 { text-align: center; margin: 1vh 0; font-size: 1.5rem; color: #333; }
-        
-        #map { flex-grow: 1; width: 100%; z-index: 0; }
-        
-        .control-panel { 
-            display: flex; 
-            justify-content: center; 
-            gap: 10px; 
-            padding: 10px; 
-            background: #f4f4f4;
-            border-bottom: 1px solid #ddd;
-        }
+const express = require('express');
+const admin = require('firebase-admin');
 
-        .action-button {
-            padding: 10px 15px;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: 700;
-            transition: background-color 0.2s;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-        .action-button:hover { opacity: 0.9; }
-        
-        #btn-sensor { background-color: #3b82f6; color: white; } /* Blue */
-        #btn-citizen { background-color: #22c55e; color: white; } /* Green */
-        #btn-pre-report { background-color: #f59e0b; color: white; } /* Amber */
+// 1. Firebase 서비스 계정 키 파싱 및 환경 변수 검증
+let serviceAccount;
+let isFirebaseInitialized = false;
 
-        /* 정보 및 상태 표시 */
-        .info-panel {
-            position: absolute;
-            top: 60px;
-            right: 10px;
-            padding: 10px;
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            z-index: 1000;
-            font-size: 0.9rem;
-            min-width: 200px;
-        }
+try {
+    const privateKeyString = process.env.FIREBASE_PRIVATE_KEY;
 
-        .status-message {
-            margin-top: 10px;
-            font-size: 0.85rem;
-            padding: 5px;
-            border-radius: 4px;
-            text-align: center;
-        }
-        .status-message.success { background-color: #d1fae5; color: #065f46; }
-        .status-message.error { background-color: #fee2e2; color: #991b1b; }
-        .status-message.waiting { background-color: #fffbeb; color: #b45309; }
+    if (!privateKeyString) {
+        throw new Error("FIREBASE_PRIVATE_KEY 환경 변수가 설정되지 않았습니다. Vercel 설정을 확인하세요.");
+    }
 
-        /* 모달 스타일 */
-        .modal {
-            display: none; 
-            position: fixed; 
-            z-index: 2000; 
-            left: 0; 
-            top: 0; 
-            width: 100%; 
-            height: 100%; 
-            overflow: auto; 
-            background-color: rgba(0,0,0,0.4); 
-            padding-top: 50px;
-        }
-        .modal-content {
-            background-color: #fefefe;
-            margin: 5% auto; 
-            padding: 20px;
-            border-radius: 8px;
-            width: 90%; 
-            max-width: 400px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-        }
-        .modal-content h2 { margin-top: 0; border-bottom: 2px solid #eee; padding-bottom: 10px; }
-        .modal-content label, .modal-content input { display: block; width: 100%; margin-bottom: 10px; }
-        .modal-content input[type="number"], .modal-content input[type="date"], .modal-content input[type="datetime-local"] { padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
-        .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
-        .modal-actions button { padding: 8px 15px; border-radius: 4px; cursor: pointer; }
-    </style>
-</head>
-<body>
-    <h1>불법 소각 감지 실시간 지도</h1>
+    // JSON 문자열을 객체로 파싱
+    serviceAccount = JSON.parse(privateKeyString);
+    console.log("✅ 1. JSON.parse 성공. 서비스 계정 객체 생성됨.");
 
-    <div class="control-panel">
-        <button id="btn-sensor" class="action-button" onclick="startInput('sensor')"><i class="fas fa-microchip"></i> 직접 감지 값 시뮬레이션</button>
-        <button id="btn-citizen" class="action-button" onclick="startInput('citizen')"><i class="fas fa-user-edit"></i> 시민 신고</button>
-        <button id="btn-pre-report" class="action-button" onclick="startInput('pre-report')"><i class="fas fa-flag"></i> 소각 사전 신고</button>
-    </div>
+    // 🚨 치명적인 오류 수정 지점: private_key PEM 형식 교정 (Vercel 환경 변수 대응)
+    if (serviceAccount.private_key && typeof serviceAccount.private_key === 'string') {
+        serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+        console.log("✅ 2. Private Key 내의 \\n 이스케이프 문자 실제 개행문자로 변환 완료.");
+    }
 
-    <div id="map"></div>
+} catch (error) {
+    console.error("🚨 Firebase Key 파싱 또는 PEM 형식 오류:", error.message);
+    console.error("Vercel 환경 변수 'FIREBASE_PRIVATE_KEY' 값이 올바른 전체 JSON 객체인지 확인해주세요.");
+}
 
-    <div id="info-panel" class="info-panel">
-        <p><b>선택 위치 (드래그 가능):</b></p>
-        <p id="current-coords">지도를 클릭해 주세요.</p>
-        <hr>
-        <div class="legend">
-            <p>● 직접 감지 / ▲ 시민 신고</p>
-            <span style="color: #ff8c00;">■ 신고O (주황색)</span>
-            <span style="color: #dc2626;">■ 신고X (빨간색)</span>
-            <span style="color: #f59e0b;">⬤ 사전 신고 구역</span>
-        </div>
-    </div>
-    
-    <!-- 모달 UI -->
-    <div id="input-modal" class="modal">
-        <div class="modal-content">
-            <h2 id="modal-title"></h2>
-            <div id="modal-form-content"></div>
-            <p id="modal-coords"></p>
-            <div class="modal-actions">
-                <button onclick="closeModal()">취소</button>
-                <button id="submit-data" style="background-color: #3b82f6; color: white;">등록</button>
-            </div>
-            <div id="modal-status" class="status-message" style="display: none;"></div>
-        </div>
-    </div>
+const app = express(); // Express 앱은 초기화 확인 전에 생성
+app.use(express.json());
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://unpkg.com/leaflet.markercluster@1.5.1/dist/leaflet.markercluster.js"></script>
-    
-    <script>
-        // Leaflet 지도 초기화
-        const map = L.map('map').setView([37.5665, 126.9780], 12); 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap contributors'
-        }).addTo(map);
-
-        // 마커 클러스터 그룹 초기화
-        const markers = L.markerClusterGroup();
-        map.addLayer(markers);
-
-        // 사전 신고 구역 레이어 그룹 (클러스터와 별도로 관리)
-        const preReportLayers = L.layerGroup().addTo(map);
-
-        let currentInputType = null;
-        let selectedCoords = null;
-        let tempMarker = null; 
-
-        // DOM 요소 캐시
-        const currentCoordsEl = document.getElementById('current-coords');
-        const modalEl = document.getElementById('input-modal');
-        const modalTitleEl = document.getElementById('modal-title');
-        const modalFormContentEl = document.getElementById('modal-form-content');
-        const modalCoordsEl = document.getElementById('modal-coords');
-        const modalStatusEl = document.getElementById('modal-status');
-        const submitButton = document.getElementById('submit-data');
-
-
-        // ---------------------------------------------------------------------
-        // 1. 커스텀 아이콘 팩토리
-        // ---------------------------------------------------------------------
-
-        const createCircleIcon = (color) => L.divIcon({
-            html: `<svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8" fill="${color}" stroke="black" stroke-width="1.5"/></svg>`,
-            className: 'circle-icon',
-            iconSize: [20, 20],
-            iconAnchor: [10, 10], 
-            popupAnchor: [0, -10]
+// 2. Firebase Admin SDK 초기화
+if (serviceAccount && admin.apps.length === 0) {
+    try {
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount),
+            databaseURL: `https://${serviceAccount.project_id}.firebaseio.com` 
         });
+        isFirebaseInitialized = true;
+        console.log(`🚀 Firebase Admin SDK 초기화 성공 (Project: ${serviceAccount.project_id})`);
+    } catch(initError) {
+        console.error('🔥 Firebase Admin SDK 초기화 중 최종 실패 (Admin SDK 오류):', initError.message);
+    }
+} else if (admin.apps.length > 0) {
+    isFirebaseInitialized = true;
+    console.log("⚠️ Firebase Admin SDK는 이미 초기화되어 있습니다.");
+}
 
-        const createTriangleIcon = (color) => L.divIcon({
-            html: `<svg width="20" height="20" viewBox="0 0 100 100" class="triangle-icon"><polygon points="50,10 90,90 10,90" fill="${color}" stroke="black" stroke-width="5"/></svg>`,
-            className: 'triangle-icon',
-            iconSize: [20, 20],
-            iconAnchor: [10, 10], 
-            popupAnchor: [0, -10]
+const db = isFirebaseInitialized ? admin.firestore() : null;
+
+/**
+ * 💡 Firebase 초기화 확인 미들웨어: 초기화 실패 시 500 오류 반환
+ */
+app.use((req, res, next) => {
+    if (!isFirebaseInitialized || !db) {
+        console.error('🚨 API 호출 거부: Firebase Admin SDK 초기화 실패 상태. 키 확인이 필요합니다.');
+        return res.status(500).json({ 
+            error: "서버 설정 오류 (Firebase Admin Key)", 
+            message: "백엔드 서버가 Firebase 인증에 실패하여 데이터를 불러올 수 없습니다. Vercel의 환경 변수(FIREBASE_PRIVATE_KEY) 설정이 올바른지 확인해주세요."
         });
+    }
+    next();
+});
 
+/**
+ * 💡 Helper function to delete documents in a collection in batches
+ */
+async function deleteCollection(collectionPath, batchSize = 100) {
+    const collectionRef = db.collection(collectionPath);
+    const query = collectionRef.orderBy(admin.firestore.FieldPath.documentId()).limit(batchSize);
 
-        // ---------------------------------------------------------------------
-        // 2. 지도 클릭 및 드래그 로직 (수정됨)
-        // ---------------------------------------------------------------------
+    return new Promise((resolve, reject) => {
+        deleteQueryBatch(query, resolve, reject);
+    });
+}
 
-        function updateSelectedPosition(latlng) {
-            const lat = latlng.lat.toFixed(6);
-            const lon = latlng.lng.toFixed(6);
-            selectedCoords = { lat: parseFloat(lat), lon: parseFloat(lon) };
-            currentCoordsEl.innerHTML = `위도: ${lat}, 경도: ${lon}`;
-        }
-
-        map.on('click', (e) => {
-            // 위치 업데이트
-            updateSelectedPosition(e.latlng);
-
-            // 임시 마커 표시 또는 업데이트
-            if (tempMarker) {
-                map.removeLayer(tempMarker);
+function deleteQueryBatch(query, resolve, reject) {
+    query.get()
+        .then((snapshot) => {
+            if (snapshot.size === 0) {
+                return 0;
             }
-            
-            // 임시 마커 생성 (드래그 가능하도록 설정)
-            tempMarker = L.marker(selectedCoords, {
-                draggable: true, // 드래그 가능
-                icon: L.divIcon({ className: 'current-selection', html: '<i class="fas fa-map-marker-alt" style="color:#007bff; font-size:24px;"></i>' })
-            }).addTo(map);
 
-            // 드래그 종료 시 위치 업데이트 이벤트 리스너 추가
-            tempMarker.on('dragend', function(event) {
-                const marker = event.target;
-                const position = marker.getLatLng();
-                updateSelectedPosition(position);
+            const batch = db.batch();
+            snapshot.docs.forEach((doc) => {
+                batch.delete(doc.ref);
             });
 
-            // 입력 모드라면 모달 열기
-            if (currentInputType) {
-                openModal(currentInputType);
-                currentInputType = null; // 모달을 열었으므로 입력 모드 종료
-            }
-        });
-
-        // 사용자가 버튼을 눌러 입력 모드 시작
-        function startInput(type) {
-            currentInputType = type;
-            if (selectedCoords) {
-                // 이미 위치가 선택된 경우 즉시 모달 열기
-                openModal(type);
-                currentInputType = null; 
-            } else {
-                // 위치가 선택되지 않은 경우 메시지 표시
-                showCustomAlert('지도에서 위치를 먼저 클릭해 주세요.');
-            }
-        }
-
-
-        // ---------------------------------------------------------------------
-        // 3. 모달 및 폼 생성 로직 (사전 신고 폼에 datetime-local 추가)
-        // ---------------------------------------------------------------------
-
-        function openModal(type) {
-            if (!selectedCoords) return;
-
-            let title = '';
-            let formHtml = '';
-            
-            modalCoordsEl.textContent = `선택 위치: 위도 ${selectedCoords.lat.toFixed(6)}, 경도 ${selectedCoords.lon.toFixed(6)}`;
-            
-            // 폼 HTML 정의
-            if (type === 'sensor') {
-                title = '직접 감지 값 시뮬레이션';
-                formHtml = `
-                    <label for="sensor-smoke">연기량 (50 이상 권장):</label>
-                    <input type="number" id="sensor-smoke" value="100" min="0" required>
-                    <label for="sensor-temp">온도 (°C):</label>
-                    <input type="number" id="sensor-temp" value="30" min="0" required>
-                    <input type="hidden" id="sensor-time" value="${Date.now()}">
-                `;
-            } else if (type === 'citizen') {
-                title = '시민 신고';
-                formHtml = `
-                    <p>신고 시간: ${new Date().toLocaleString()}</p>
-                    <input type="hidden" id="citizen-time" value="${Date.now()}">
-                `;
-            } else if (type === 'pre-report') {
-                title = '소각 사전 신고';
-                // datetime-local의 기본값으로 현재 시각 설정 (UTC 기준이 아닌 로컬 시각)
-                const now = new Date();
-                const offset = now.getTimezoneOffset() * 60000; // Timezone offset in milliseconds
-                const localISOTime = (new Date(now - offset)).toISOString().slice(0, 16);
-
-                formHtml = `
-                    <label for="pre-report-start">소각 시작 날짜/시간:</label>
-                    <input type="datetime-local" id="pre-report-start" value="${localISOTime}" required>
-                    <label for="pre-report-end">소각 종료 날짜/시간:</label>
-                    <input type="datetime-local" id="pre-report-end" value="${localISOTime}" required>
-                    <label for="pre-report-range">소각 반경 (km):</label>
-                    <input type="number" id="pre-report-range" value="0.5" min="0.1" step="0.1" required>
-                `;
-            }
-
-            modalTitleEl.textContent = title;
-            modalFormContentEl.innerHTML = formHtml;
-            submitButton.onclick = () => submitData(type);
-            modalStatusEl.style.display = 'none';
-            modalEl.style.display = 'block';
-        }
-
-        function closeModal() {
-            modalEl.style.display = 'none';
-            modalStatusEl.style.display = 'none';
-        }
-
-
-        // ---------------------------------------------------------------------
-        // 4. 데이터 전송 (POST 요청) 로직 (변동 없음)
-        // ---------------------------------------------------------------------
-
-        async function submitData(type) {
-            if (!selectedCoords) return;
-
-            modalStatusEl.className = 'status-message waiting';
-            modalStatusEl.textContent = '데이터 등록 중...';
-            modalStatusEl.style.display = 'block';
-
-            let payload = { lat: selectedCoords.lat, lon: selectedCoords.lon };
-            let endpoint = '';
-
-            // 폼 데이터 수집
-            if (type === 'sensor') {
-                const smoke = document.getElementById('sensor-smoke').value;
-                const temp = document.getElementById('sensor-temp').value;
-                if (!smoke || !temp) { return updateStatus('error', '연기량과 온도를 입력해 주세요.'); }
-
-                payload = { 
-                    ...payload, 
-                    smoke: parseFloat(smoke), 
-                    temp: parseFloat(temp), 
-                    time: Date.now(),
-                    humidity: 60 
-                };
-                endpoint = '/api/add/sensor';
-            } else if (type === 'citizen') {
-                payload = { ...payload, time: Date.now() };
-                endpoint = '/api/add/citizen';
-            } else if (type === 'pre-report') {
-                const startTimeStr = document.getElementById('pre-report-start').value;
-                const endTimeStr = document.getElementById('pre-report-end').value;
-                const range = document.getElementById('pre-report-range').value;
-                if (!startTimeStr || !endTimeStr || !range) { return updateStatus('error', '모든 필드를 입력해 주세요.'); }
-                
-                // ISO 문자열을 UTC 기준으로 파싱 후 getTime()으로 Unix Milliseconds 얻음
-                const startDate = new Date(startTimeStr).getTime();
-                const endDate = new Date(endTimeStr).getTime();
-                
-                if (endDate <= startDate) { return updateStatus('error', '종료 시각은 시작 시각보다 늦어야 합니다.'); }
-
-                payload = { 
-                    ...payload, 
-                    startDate: startDate, 
-                    endDate: endDate, 
-                    rangeKm: parseFloat(range) 
-                };
-                endpoint = '/api/add/pre';
-            } else {
+            return batch.commit().then(() => snapshot.size);
+        })
+        .then((numDeleted) => {
+            if (numDeleted === 0) {
+                resolve();
                 return;
             }
 
-            // POST 요청
-            try {
-                const response = await fetch(endpoint, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
+            // Recurse on the next batch
+            process.nextTick(() => {
+                deleteQueryBatch(query, resolve, reject);
+            });
+        })
+        .catch(reject);
+}
 
-                if (!response.ok) {
-                    let errorMessage = `API 등록 실패 (${response.status} ${response.statusText})`;
-                    
-                    try {
-                        const errorText = await response.text();
-                        if (errorText) {
-                            try {
-                                const errorData = JSON.parse(errorText);
-                                errorMessage = errorData.error || errorData.message || JSON.stringify(errorData);
-                            } catch (e) {
-                                errorMessage = errorText.substring(0, 200); 
-                            }
-                        } else {
-                            errorMessage = response.statusText || '응답 본문 없음';
-                        }
-                    } catch (e) {
-                        errorMessage = `응답 본문 읽기 오류. 상태 코드: ${response.status}`;
-                    }
+/**
+ * 💡 POST /api/delete/all: 모든 데이터 일괄 삭제
+ */
+app.post('/api/delete/all', async (req, res) => {
+    try {
+        const collections = ['sensorData', 'citizenReports', 'preReports'];
+        const deletePromises = collections.map(col => deleteCollection(col));
 
-                    throw new Error(errorMessage);
-                }
+        await Promise.all(deletePromises);
 
-                updateStatus('success', `${modalTitleEl.textContent}이(가) 성공적으로 등록되었습니다!`);
-                
-                setTimeout(() => {
-                    closeModal();
-                    loadAndDisplayData();
-                }, 1000);
+        console.log('✅ All data cleared from all three collections.');
+        res.status(200).json({ message: "All data cleared successfully." });
 
-            } catch (error) {
-                console.error('데이터 전송 오류:', error);
-                updateStatus('error', `등록 오류: ${error.message}`);
-            }
-        }
-
-        function updateStatus(type, message) {
-            modalStatusEl.className = `status-message ${type}`;
-            modalStatusEl.textContent = message;
-        }
-
-        function showCustomAlert(message) {
-            let box = document.getElementById('custom-alert');
-            if (!box) {
-                box = document.createElement('div');
-                box.id = 'custom-alert';
-                box.style.cssText = `
-                    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-                    padding: 20px; background: #fff; border: 1px solid #ccc; border-radius: 8px;
-                    box-shadow: 0 4px 10px rgba(0,0,0,0.2); z-index: 9999; text-align: center;
-                    min-width: 250px; font-size: 1rem;
-                `;
-                box.innerHTML = `<p id="alert-text" style="margin-bottom: 10px;"></p><button onclick="document.getElementById('custom-alert').style.display='none';" style="padding: 5px 15px; background-color: #dc2626; color: white; border: none; border-radius: 5px; cursor: pointer;">확인</button>`;
-                document.body.appendChild(box);
-            }
-            document.getElementById('alert-text').innerText = message;
-            box.style.display = 'block';
-        }
+    } catch (error) {
+        console.error('🔥 Error deleting all data:', error);
+        res.status(500).json({ error: "Error deleting all data from Firebase" });
+    }
+});
 
 
-        // ---------------------------------------------------------------------
-        // 5. 시각화 로직 (사전 신고 범위 표시 추가)
-        // ---------------------------------------------------------------------
+/**
+ * 💡 GET /api/data: 세 가지 컬렉션의 데이터를 모두 불러와 하나의 객체로 반환
+ */
+app.get('/api/data', async (req, res) => {
+    try {
+        const [
+            sensorSnapshot, 
+            citizenSnapshot, 
+            preReportSnapshot
+        ] = await Promise.all([
+            db.collection('sensorData').get(),
+            db.collection('citizenReports').get(),
+            db.collection('preReports').get()
+        ]);
         
-        const isInPreReport = (lat, lon, time, preReports) => {
-            const currentTime = time; 
-            
-            for (const report of preReports) {
-                const radiusKm = report.rangeKm || 0.1;
-                const centerLat = report.lat;
-                const centerLon = report.lon;
-                const startTime = report.startDate; 
-                const endTime = report.endDate; 
-                
-                // 시간 체크
-                const isWithinTime = currentTime >= startTime && currentTime <= endTime;
-                if (!isWithinTime) continue;
+        const sensorData = sensorSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const citizenReports = citizenSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const preReports = preReportSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        
+        res.json({
+            sensorData,
+            citizenReports,
+            preReports
+        }); 
+    } catch (error) {
+        console.error('🔥 Error fetching combined data from Firebase:', error);
+        res.status(500).json({ error: "Error fetching combined data from Firebase" });
+    }
+});
 
-                // Haversine 공식 (대략적인 거리 계산)
-                const R = 6371; // 지구 반경 (km)
-                const dLat = (lat - centerLat) * (Math.PI / 180);
-                const dLon = (lon - centerLon) * (Math.PI / 180);
 
-                const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                          Math.cos(centerLat * (Math.PI / 180)) * Math.cos(lat * (Math.PI / 180)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-                
-                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-                const distanceKm = R * c;
-
-                const isWithinRange = distanceKm <= radiusKm;
-                
-                if (isWithinRange) {
-                    return true;
-                }
-            }
-            return false;
+/**
+ * 💡 POST /api/add/sensor: 직접 감지 값 (시뮬레이션) 저장
+ * 수정: lat, lon, smoke, temp를 명시적으로 숫자로 변환 (parseFloat)
+ */
+app.post('/api/add/sensor', async (req, res) => {
+    try {
+        const { lat, lon, smoke, temp, humidity, time } = req.body;
+        if (lat === undefined || lon === undefined || smoke === undefined || temp === undefined) {
+            return res.status(400).json({ error: "Missing required fields for sensor data" });
+        }
+        
+        const newDoc = {
+            lat: parseFloat(lat), // 숫자로 변환
+            lon: parseFloat(lon), // 숫자로 변환
+            smoke: parseFloat(smoke), // 숫자로 변환
+            temp: parseFloat(temp), // 숫자로 변환
+            humidity: parseFloat(humidity || 0), 
+            time: parseInt(time) || Date.now(),
+            createdAt: admin.firestore.FieldValue.serverTimestamp()
         };
-        
-        async function loadAndDisplayData() {
-            try {
-                const response = await fetch('/api/data'); 
-                if (!response.ok) throw new Error('Failed to fetch data from API');
-                
-                const allData = await response.json();
-                
-                const preReports = allData.preReports || [];
-                const sensorData = allData.sensorData || [];
-                const citizenReports = allData.citizenReports || [];
-                
-                // 이전 마커/레이어 초기화
-                markers.clearLayers(); 
-                preReportLayers.clearLayers(); // 사전 신고 구역 초기화
 
-                // C. 사전 신고 데이터 (preReports) 시각화 (추가된 기능)
-                preReports.forEach(report => {
-                    const radiusMeters = report.rangeKm * 1000;
-                    
-                    // 원 (Circle) 레이어 생성: 반경(미터), 색상, 투명도 설정
-                    const circle = L.circle([report.lat, report.lon], {
-                        radius: radiusMeters,
-                        color: '#f59e0b', // Amber
-                        fillColor: '#fcd34d', // Light Amber
-                        fillOpacity: 0.3,
-                        weight: 2
-                    }).addTo(preReportLayers);
+        const docRef = await db.collection('sensorData').add(newDoc);
+        res.status(201).json({ message: "Sensor data added", id: docRef.id });
 
-                    // 팝업 내용 설정 (시간 범위 포함)
-                    const startDateStr = new Date(report.startDate).toLocaleString('ko-KR');
-                    const endDateStr = new Date(report.endDate).toLocaleString('ko-KR');
-
-                    circle.bindPopup(`
-                        <b>[사전 신고 구역]</b><br>
-                        <b>반경:</b> ${report.rangeKm} km<br>
-                        <b>시작 시각:</b> ${startDateStr}<br>
-                        <b>종료 시각:</b> ${endDateStr}
-                    `);
-
-                    // 핀 마커도 함께 표시 (중심점)
-                    L.marker([report.lat, report.lon], {
-                        icon: L.divIcon({ className: 'pre-report-center', html: '<i class="fas fa-flag" style="color:#f59e0b; font-size:18px;"></i>' })
-                    }).bindPopup(`<b>사전 신고 중심</b><br>반경: ${report.rangeKm} km`).addTo(preReportLayers);
-
-                });
+    } catch (error) {
+        console.error('🔥 Error adding sensor data:', error);
+        res.status(500).json({ error: "Error adding sensor data" });
+    }
+});
 
 
-                // A. 직접 감지 데이터 (sensorData) 처리
-                sensorData.forEach(row => {
-                    if (row.smoke && row.smoke > 50) { 
-                        const isReported = isInPreReport(row.lat, row.lon, row.time, preReports);
-                        const color = isReported ? '#ff8c00' : '#dc2626'; 
-                        const icon = createCircleIcon(color);
-                        const marker = L.marker([row.lat, row.lon], { icon: icon }).bindPopup(`
-                            <b>[직접 감지]</b><br>
-                            <b>시간:</b> ${new Date(row.time).toLocaleString()}<br>
-                            <b>연기량:</b> ${row.smoke}<br>
-                            <b>신고 여부:</b> ${isReported ? '✅ 사전 신고됨' : '🚨 불법 소각 의심'}
-                        `);
-                        markers.addLayer(marker);
-                    }
-                });
-
-                // B. 시민 신고 데이터 (citizenReports) 처리
-                citizenReports.forEach(row => {
-                    const isReported = isInPreReport(row.lat, row.lon, row.time, preReports);
-                    const color = isReported ? '#ff8c00' : '#dc2626'; 
-                    const icon = createTriangleIcon(color);
-
-                    const marker = L.marker([row.lat, row.lon], { icon: icon }).bindPopup(`
-                        <b>[시민 신고]</b><br>
-                        <b>시간:</b> ${new Date(row.time).toLocaleString()}<br>
-                        <b>신고 여부:</b> ${isReported ? '✅ 사전 신고됨' : '🚨 불법 소각 의심'}
-                    `);
-                    markers.addLayer(marker);
-                });
-
-                map.addLayer(markers);
-            } catch (error) {
-                console.error('데이터 로딩 및 시각화 오류:', error);
-            }
+/**
+ * 💡 POST /api/add/citizen: 시민 신고 값 저장
+ * 수정: lat, lon을 명시적으로 숫자로 변환 (parseFloat)
+ */
+app.post('/api/add/citizen', async (req, res) => {
+    try {
+        const { lat, lon, time } = req.body;
+        if (lat === undefined || lon === undefined) {
+            return res.status(400).json({ error: "Missing required fields for citizen report" });
         }
         
-        loadAndDisplayData();
-        setInterval(loadAndDisplayData, 10000); 
+        const newDoc = {
+            lat: parseFloat(lat), // 숫자로 변환
+            lon: parseFloat(lon), // 숫자로 변환
+            time: parseInt(time) || Date.now(),
+            createdAt: admin.firestore.FieldValue.serverTimestamp()
+        };
 
-    </script>
-</body>
-</html>
+        const docRef = await db.collection('citizenReports').add(newDoc);
+        res.status(201).json({ message: "Citizen report added", id: docRef.id });
+
+    } catch (error) {
+        console.error('🔥 Error adding citizen report:', error);
+        res.status(500).json({ error: "Error adding citizen report" });
+    }
+});
+
+
+/**
+ * 💡 POST /api/add/pre: 소각 사전 신고 정보 저장
+ * 수정: lat, lon, rangeKm을 명시적으로 숫자로 변환 (parseFloat)
+ */
+app.post('/api/add/pre', async (req, res) => {
+    try {
+        const { lat, lon, startDate, endDate, rangeKm } = req.body;
+        if (lat === undefined || lon === undefined || startDate === undefined || endDate === undefined) {
+            return res.status(400).json({ error: "Missing required fields for pre-report" });
+        }
+        
+        const newDoc = {
+            lat: parseFloat(lat), // 숫자로 변환
+            lon: parseFloat(lon), // 숫자로 변환
+            startDate: parseInt(startDate),
+            endDate: parseInt(endDate),
+            rangeKm: parseFloat(rangeKm || 0.1), // 숫자로 변환
+            createdAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+
+        const docRef = await db.collection('preReports').add(newDoc);
+        res.status(201).json({ message: "Pre-report added", id: docRef.id });
+
+    } catch (error) {
+        console.error('🔥 Error adding pre-report:', error);
+        res.status(500).json({ error: "Error adding pre-report" });
+    }
+});
+
+module.exports = app;
