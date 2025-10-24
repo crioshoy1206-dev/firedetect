@@ -1,245 +1,334 @@
-const express = require('express');
-const admin = require('firebase-admin');
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>불법 소각 감지 지도</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    
+    <style>
+        body { margin: 0; font-family: 'Noto Sans KR', sans-serif; display: flex; flex-direction: column; height: 100vh; }
+        h1 { text-align: center; margin: 1vh 0; font-size: 1.5rem; color: #333; }
+        
+        #map { flex-grow: 1; width: 100%; z-index: 0; }
+        
+        .control-panel { 
+            display: flex; 
+            justify-content: center; 
+            gap: 10px; 
+            padding: 10px; 
+            background: #f4f4f4;
+            border-bottom: 1px solid #ddd;
+            flex-wrap: wrap; /* 모바일 대응 */
+        }
 
-// 1. Firebase 서비스 계정 키 파싱 및 환경 변수 검증
-let serviceAccount;
-let isFirebaseInitialized = false;
+        /* Custom Marker Styles */
+        .custom-marker {
+            font-size: 25px;
+            text-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
+        }
 
-try {
-    const privateKeyString = process.env.FIREBASE_PRIVATE_KEY;
+        /* Message Box / Modal Styles (추가) */
+        #messageBox, #confirmModal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.6);
+            display: none; /* 초기에는 숨김 */
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
 
-    if (!privateKeyString) {
-        throw new Error("FIREBASE_PRIVATE_KEY 환경 변수가 설정되지 않았습니다. Vercel 설정을 확인하세요.");
-    }
+        .modal-content {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+            max-width: 90%;
+            min-width: 300px;
+            text-align: center;
+            animation: fadeIn 0.3s ease-out;
+        }
+        
+        .modal-icon {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
 
-    // JSON 문자열을 객체로 파싱
-    serviceAccount = JSON.parse(privateKeyString);
-    console.log("✅ 1. JSON.parse 성공. 서비스 계정 객체 생성됨.");
+        @keyframes fadeIn {
+            from { opacity: 0; transform: scale(0.9); }
+            to { opacity: 1; transform: scale(1); }
+        }
+        
+    </style>
+    
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+    
+    <h1><i class="fas fa-smog text-red-600 mr-2"></i> 불법 소각 감지 시스템 지도</h1>
+    
+    <div class="control-panel">
+        <button onclick="fetchData()" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow transition duration-150 transform hover:scale-105">
+            <i class="fas fa-sync mr-2"></i> 지도 새로고침
+        </button>
+        <a href="./citizen_report.html" target="_blank" class="bg-indigo-500 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg shadow transition duration-150 transform hover:scale-105">
+            <i class="fas fa-fire mr-2"></i> 소각 신고/등록
+        </a>
+        
+        <!-- 데이터베이스 일괄 삭제 버튼 추가 -->
+        <button id="deleteAllBtn" onclick="showConfirmDelete()" class="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow transition duration-150 transform hover:scale-105">
+            <i class="fas fa-trash-alt mr-2"></i> 데이터베이스 일괄 삭제
+        </button>
+    </div>
 
-    // 🚨 치명적인 오류 수정 지점: private_key PEM 형식 교정 (Vercel 환경 변수 대응)
-    if (serviceAccount.private_key && typeof serviceAccount.private_key === 'string') {
-        serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
-        console.log("✅ 2. Private Key 내의 \\n 이스케이프 문자 실제 개행문자로 변환 완료.");
-    }
+    <div id="map"></div>
+    
+    <!-- 메시지 박스 (알림용 - 추가) -->
+    <div id="messageBox" class="fixed hidden" onclick="closeMessageBox()">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div id="messageIcon" class="modal-icon text-blue-500"></div>
+            <p id="messageText" class="text-lg font-semibold mb-4"></p>
+            <button onclick="closeMessageBox()" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow">확인</button>
+        </div>
+    </div>
+    
+    <!-- 확인 모달 (삭제용 - 추가) -->
+    <div id="confirmModal" class="fixed hidden">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-icon text-red-500"><i class="fas fa-exclamation-triangle"></i></div>
+            <p id="confirmText" class="text-lg font-semibold mb-4 text-red-700">⚠️ **경고**: 모든 센서, 신고, 사전 신고 데이터가 영구적으로 삭제됩니다. 계속하시겠습니까?</p>
+            <div class="flex justify-center gap-4">
+                <button onclick="closeConfirmBox()" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg shadow">취소</button>
+                <button onclick="deleteAllData(true)" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg shadow">삭제 진행</button>
+            </div>
+        </div>
+    </div>
 
-} catch (error) {
-    console.error("🚨 Firebase Key 파싱 또는 PEM 형식 오류:", error.message);
-    console.error("Vercel 환경 변수 'FIREBASE_PRIVATE_KEY' 값이 올바른 전체 JSON 객체인지 확인해주세요.");
-}
+    <script>
+        // 전역 변수
+        let map;
+        let markers = new L.FeatureGroup(); // 센서 및 시민 신고 마커 그룹
+        let preReportGroup = new L.FeatureGroup(); // 사전 신고 원 그룹
 
-const app = express(); // Express 앱은 초기화 확인 전에 생성
-app.use(express.json());
+        // --- 1. 유틸리티 함수 (모달, 아이콘 등 - 삭제 기능 관련 추가) ---
 
-// 2. Firebase Admin SDK 초기화
-if (serviceAccount && admin.apps.length === 0) {
-    try {
-        admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount),
-            databaseURL: `https://${serviceAccount.project_id}.firebaseio.com` 
-        });
-        isFirebaseInitialized = true;
-        console.log(`🚀 Firebase Admin SDK 초기화 성공 (Project: ${serviceAccount.project_id})`);
-    } catch(initError) {
-        console.error('🔥 Firebase Admin SDK 초기화 중 최종 실패 (Admin SDK 오류):', initError.message);
-    }
-} else if (admin.apps.length > 0) {
-    isFirebaseInitialized = true;
-    console.log("⚠️ Firebase Admin SDK는 이미 초기화되어 있습니다.");
-}
+        function showMessageBox(message, type = 'info') {
+            const messageBox = document.getElementById('messageBox');
+            const messageText = document.getElementById('messageText');
+            const messageIcon = document.getElementById('messageIcon');
+            
+            messageText.textContent = message;
+            
+            let iconClass = '';
+            let iconColor = '';
 
-const db = isFirebaseInitialized ? admin.firestore() : null;
-
-/**
- * 💡 Firebase 초기화 확인 미들웨어: 초기화 실패 시 500 오류 반환
- */
-app.use((req, res, next) => {
-    if (!isFirebaseInitialized || !db) {
-        console.error('🚨 API 호출 거부: Firebase Admin SDK 초기화 실패 상태. 키 확인이 필요합니다.');
-        return res.status(500).json({ 
-            error: "서버 설정 오류 (Firebase Admin Key)", 
-            message: "백엔드 서버가 Firebase 인증에 실패하여 데이터를 불러올 수 없습니다. Vercel의 환경 변수(FIREBASE_PRIVATE_KEY) 설정이 올바른지 확인해주세요."
-        });
-    }
-    next();
-});
-
-/**
- * 💡 Helper function to delete documents in a collection in batches
- */
-async function deleteCollection(collectionPath, batchSize = 100) {
-    const collectionRef = db.collection(collectionPath);
-    const query = collectionRef.orderBy(admin.firestore.FieldPath.documentId()).limit(batchSize);
-
-    return new Promise((resolve, reject) => {
-        deleteQueryBatch(query, resolve, reject);
-    });
-}
-
-function deleteQueryBatch(query, resolve, reject) {
-    query.get()
-        .then((snapshot) => {
-            if (snapshot.size === 0) {
-                return 0;
+            switch (type) {
+                case 'success':
+                    iconClass = 'fas fa-check-circle';
+                    iconColor = 'text-green-500';
+                    break;
+                case 'error':
+                    iconClass = 'fas fa-times-circle';
+                    iconColor = 'text-red-500';
+                    break;
+                default: // info
+                    iconClass = 'fas fa-info-circle';
+                    iconColor = 'text-blue-500';
             }
+            
+            messageIcon.innerHTML = `<i class="${iconClass} ${iconColor}"></i>`;
+            messageBox.style.display = 'flex';
+        }
 
-            const batch = db.batch();
-            snapshot.docs.forEach((doc) => {
-                batch.delete(doc.ref);
+        function closeMessageBox() {
+            document.getElementById('messageBox').style.display = 'none';
+        }
+
+        function showConfirmDelete() {
+            document.getElementById('confirmModal').style.display = 'flex';
+        }
+
+        function closeConfirmBox() {
+            document.getElementById('confirmModal').style.display = 'none';
+        }
+
+        // 마커 아이콘 생성 함수 (센서: 사각형, 신고: 삼각형)
+        function createDivIcon(html, className, color) {
+            return L.divIcon({
+                className: `custom-marker ${className}`,
+                html: `<div style="color: ${color};">${html}</div>`,
+                iconSize: [25, 25],
+                iconAnchor: [12, 12]
             });
+        }
+        
+        function createSquareIcon(color) {
+            // 연기 감지 (사각형)
+            return createDivIcon('<i class="fas fa-square-full"></i>', 'square-icon', color);
+        }
 
-            return batch.commit().then(() => snapshot.size);
-        })
-        .then((numDeleted) => {
-            if (numDeleted === 0) {
-                resolve();
-                return;
+        function createTriangleIcon(color) {
+            // 시민 신고 (삼각형)
+            return createDivIcon('<i class="fas fa-caret-up"></i>', 'triangle-icon', color);
+        }
+
+        // --- 2. 데이터 처리 로직 ---
+
+        // 사전 신고 범위 내인지 확인하는 헬퍼 함수
+        function isInPreReport(lat, lon, time, preReports) {
+            const currentPoint = L.latLng(Number(lat), Number(lon));
+            const currentTime = Number(time);
+
+            return preReports.some(report => {
+                const centerPoint = L.latLng(Number(report.lat), Number(report.lon));
+                // NaN 방지를 위해 rangeKm이 없으면 기본값 0.1km (100m) 사용
+                const rangeMeters = Number(report.rangeKm || 0.1) * 1000; 
+                
+                // 시간 조건 확인
+                const isTimeValid = currentTime >= Number(report.startDate) && currentTime <= Number(report.endDate);
+                
+                // 거리 조건 확인 (미터 단위)
+                const distance = currentPoint.distanceTo(centerPoint);
+                const isDistanceValid = distance <= rangeMeters;
+
+                return isTimeValid && isDistanceValid;
+            });
+        }
+
+        async function fetchData() {
+            try {
+                const response = await fetch('/api/data');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const { sensorData, citizenReports, preReports } = await response.json();
+                
+                renderData(sensorData, citizenReports, preReports);
+
+            } catch (error) {
+                console.error('데이터 로딩 실패:', error);
+                // 오류 메시지 박스 호출 추가
+                showMessageBox(`데이터를 불러오는데 실패했습니다. 서버 상태(Vercel 배포)를 확인하세요: ${error.message}`, 'error');
             }
-
-            // Recurse on the next batch
-            process.nextTick(() => {
-                deleteQueryBatch(query, resolve, reject);
-            });
-        })
-        .catch(reject);
-}
-
-/**
- * 💡 POST /api/delete/all: 모든 데이터 일괄 삭제
- */
-app.post('/api/delete/all', async (req, res) => {
-    try {
-        const collections = ['sensorData', 'citizenReports', 'preReports'];
-        const deletePromises = collections.map(col => deleteCollection(col));
-
-        await Promise.all(deletePromises);
-
-        console.log('✅ All data cleared from all three collections.');
-        res.status(200).json({ message: "All data cleared successfully." });
-
-    } catch (error) {
-        console.error('🔥 Error deleting all data:', error);
-        res.status(500).json({ error: "Error deleting all data from Firebase" });
-    }
-});
-
-
-/**
- * 💡 GET /api/data: 세 가지 컬렉션의 데이터를 모두 불러와 하나의 객체로 반환
- */
-app.get('/api/data', async (req, res) => {
-    try {
-        const [
-            sensorSnapshot, 
-            citizenSnapshot, 
-            preReportSnapshot
-        ] = await Promise.all([
-            db.collection('sensorData').get(),
-            db.collection('citizenReports').get(),
-            db.collection('preReports').get()
-        ]);
-        
-        const sensorData = sensorSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        const citizenReports = citizenSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        const preReports = preReportSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        
-        res.json({
-            sensorData,
-            citizenReports,
-            preReports
-        }); 
-    } catch (error) {
-        console.error('🔥 Error fetching combined data from Firebase:', error);
-        res.status(500).json({ error: "Error fetching combined data from Firebase" });
-    }
-});
-
-
-/**
- * 💡 POST /api/add/sensor: 직접 감지 값 (시뮬레이션) 저장
- * 수정: lat, lon, smoke, temp를 명시적으로 숫자로 변환 (parseFloat)
- */
-app.post('/api/add/sensor', async (req, res) => {
-    try {
-        const { lat, lon, smoke, temp, humidity, time } = req.body;
-        if (lat === undefined || lon === undefined || smoke === undefined || temp === undefined) {
-            return res.status(400).json({ error: "Missing required fields for sensor data" });
         }
-        
-        const newDoc = {
-            lat: parseFloat(lat), // 숫자로 변환
-            lon: parseFloat(lon), // 숫자로 변환
-            smoke: parseFloat(smoke), // 숫자로 변환
-            temp: parseFloat(temp), // 숫자로 변환
-            humidity: parseFloat(humidity || 0), 
-            time: parseInt(time) || Date.now(),
-            createdAt: admin.firestore.FieldValue.serverTimestamp()
-        };
 
-        const docRef = await db.collection('sensorData').add(newDoc);
-        res.status(201).json({ message: "Sensor data added", id: docRef.id });
+        function renderData(sensorData, citizenReports, preReports) {
+            try {
+                // 기존 마커 및 원 초기화
+                markers.clearLayers();
+                preReportGroup.clearLayers();
+                
+                // A. 사전 신고 데이터 (preReports) 처리 (범위 표시)
+                preReports.forEach(row => {
+                    // 🚨 소각 정보 범위를 초록색으로 변경
+                    L.circle([Number(row.lat), Number(row.lon)], {
+                        color: '#10b981',      /* 초록색 테두리 (emerald-600) */
+                        fillColor: '#34d399',   /* 초록색 채우기 (emerald-400) */
+                        fillOpacity: 0.2,
+                        radius: Number(row.rangeKm || 0.1) * 1000 // KM to meters, 안전을 위해 기본값 0.1km
+                    }).bindPopup(`
+                        <b>[사전 신고]</b><br>
+                        <b>시작:</b> ${new Date(Number(row.startDate)).toLocaleString()}<br>
+                        <b>종료:</b> ${new Date(Number(row.endDate)).toLocaleString()}<br>
+                        <b>반경:</b> ${Number(row.rangeKm || 0.1).toFixed(2)} km
+                    `).addTo(preReportGroup);
+                });
 
-    } catch (error) {
-        console.error('🔥 Error adding sensor data:', error);
-        res.status(500).json({ error: "Error adding sensor data" });
-    }
-});
+                map.addLayer(preReportGroup); // 사전 신고 원 먼저 지도에 추가
 
+                // B. 센서 데이터 (sensorData) 처리
+                sensorData.forEach(row => {
+                    if (row.lat && row.lon) {
+                        const isReported = isInPreReport(row.lat, row.lon, row.time, preReports);
+                        // 신고됨: 주황색, 미신고: 빨간색 (기존 색상 유지)
+                        const color = isReported ? '#f97316' : '#dc2626'; 
+                        const icon = createSquareIcon(color);
+                        
+                        const marker = L.marker([Number(row.lat), Number(row.lon)], { icon: icon }).bindPopup(`
+                            <b>[직접 감지]</b><br>
+                            <b>시간:</b> ${new Date(Number(row.time)).toLocaleString()}<br>
+                            <b>연기량:</b> ${Number(row.smoke).toFixed(2)}<br>
+                            <b>신고 여부:</b> ${isReported ? '✅ 사전 신고됨' : '🚨 불법 소각 의심'}
+                        `);
+                        markers.addLayer(marker);
+                    }
+                });
 
-/**
- * 💡 POST /api/add/citizen: 시민 신고 값 저장
- * 수정: lat, lon을 명시적으로 숫자로 변환 (parseFloat)
- */
-app.post('/api/add/citizen', async (req, res) => {
-    try {
-        const { lat, lon, time } = req.body;
-        if (lat === undefined || lon === undefined) {
-            return res.status(400).json({ error: "Missing required fields for citizen report" });
+                // C. 시민 신고 데이터 (citizenReports) 처리
+                citizenReports.forEach(row => {
+                    const isReported = isInPreReport(row.lat, row.lon, row.time, preReports);
+                    // 신고됨: 주황색, 미신고: 진한 빨강 (기존 색상 유지)
+                    const color = isReported ? '#f97316' : '#b91c1c'; 
+                    const icon = createTriangleIcon(color);
+
+                    const marker = L.marker([Number(row.lat), Number(row.lon)], { icon: icon }).bindPopup(`
+                        <b>[시민 신고]</b><br>
+                        <b>시간:</b> ${new Date(Number(row.time)).toLocaleString()}<br>
+                        <b>신고 여부:</b> ${isReported ? '✅ 사전 신고됨' : '🚨 불법 소각 의심'}
+                    `);
+                    markers.addLayer(marker);
+                });
+
+                map.addLayer(markers);
+            } catch (error) {
+                console.error('데이터 로딩 및 시각화 오류:', error);
+                showMessageBox('데이터 시각화 중 오류가 발생했습니다. 콘솔을 확인하세요.', 'error');
+            }
         }
-        
-        const newDoc = {
-            lat: parseFloat(lat), // 숫자로 변환
-            lon: parseFloat(lon), // 숫자로 변환
-            time: parseInt(time) || Date.now(),
-            createdAt: admin.firestore.FieldValue.serverTimestamp()
-        };
 
-        const docRef = await db.collection('citizenReports').add(newDoc);
-        res.status(201).json({ message: "Citizen report added", id: docRef.id });
+        // --- 3. 데이터 일괄 삭제 기능 (추가) ---
 
-    } catch (error) {
-        console.error('🔥 Error adding citizen report:', error);
-        res.status(500).json({ error: "Error adding citizen report" });
-    }
-});
+        async function deleteAllData(confirmed) {
+            closeConfirmBox();
 
+            if (!confirmed) return;
 
-/**
- * 💡 POST /api/add/pre: 소각 사전 신고 정보 저장
- * 수정: lat, lon, rangeKm을 명시적으로 숫자로 변환 (parseFloat)
- */
-app.post('/api/add/pre', async (req, res) => {
-    try {
-        const { lat, lon, startDate, endDate, rangeKm } = req.body;
-        if (lat === undefined || lon === undefined || startDate === undefined || endDate === undefined) {
-            return res.status(400).json({ error: "Missing required fields for pre-report" });
+            showMessageBox("데이터 삭제 중...", 'info');
+            
+            try {
+                // index.js에 구현된 모든 데이터 삭제 API 호출
+                const response = await fetch('/api/delete/all', {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    showMessageBox('✅ 데이터베이스의 모든 데이터가 성공적으로 삭제되었습니다.', 'success');
+                    fetchData(); // 삭제 후 지도 새로고침
+                } else {
+                    const errorData = await response.json().catch(() => ({})); // JSON 파싱 오류 오류 처리
+                    showMessageBox(`❌ 삭제 실패: ${errorData.message || errorData.error || '서버 오류'}`, 'error');
+                }
+            } catch (error) {
+                console.error('삭제 API 호출 오류:', error);
+                showMessageBox('❌ 네트워크 오류 또는 서버 응답 오류로 삭제에 실패했습니다.', 'error');
+            }
         }
-        
-        const newDoc = {
-            lat: parseFloat(lat), // 숫자로 변환
-            lon: parseFloat(lon), // 숫자로 변환
-            startDate: parseInt(startDate),
-            endDate: parseInt(endDate),
-            rangeKm: parseFloat(rangeKm || 0.1), // 숫자로 변환
-            createdAt: admin.firestore.FieldValue.serverTimestamp()
-        };
 
-        const docRef = await db.collection('preReports').add(newDoc);
-        res.status(201).json({ message: "Pre-report added", id: docRef.id });
 
-    } catch (error) {
-        console.error('🔥 Error adding pre-report:', error);
-        res.status(500).json({ error: "Error adding pre-report" });
-    }
-});
+        // --- 4. 초기화 ---
 
-module.exports = app;
+        function initializeMap() {
+            // 서울 시청을 중심으로 지도 초기화
+            map = L.map('map').setView([37.5665, 126.9780], 12); 
+
+            // OSM 타일 레이어 추가
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(map);
+
+            // 초기 데이터 로드
+            fetchData();
+        }
+
+        window.onload = initializeMap;
+
+    </script>
+</body>
+</html>
