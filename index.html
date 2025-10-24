@@ -4,17 +4,21 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>불법 소각 감지 지도</title>
-    <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <style>
-        /* 커스텀 CSS */
         body { margin: 0; font-family: 'Noto Sans KR', sans-serif; display: flex; flex-direction: column; height: 100vh; }
         h1 { text-align: center; margin: 1vh 0; font-size: 1.5rem; color: #333; }
         
-        #map { flex-grow: 1; width: 100%; z-index: 0; }
+        #map { 
+            flex-grow: 1; 
+            width: 100%; 
+            z-index: 0; 
+            position: relative; /* 범례를 포함하기 위해 relative 설정 */
+        }
         
         .control-panel { 
             display: flex; 
@@ -23,593 +27,537 @@
             padding: 10px; 
             background: #f4f4f4;
             border-bottom: 1px solid #ddd;
-            flex-wrap: wrap; /* 모바일 대응 */
-        }
-        
-        /* 모달 스타일 */
-        .modal {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.5);
-            display: none; /* 기본 숨김 */
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        }
-        
-        .modal-content {
-            background: white;
-            padding: 20px;
-            border-radius: 12px;
-            width: 90%;
-            max-width: 500px;
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
-            animation: fadeIn 0.3s;
+            flex-wrap: wrap;
         }
 
-        @keyframes fadeIn {
-            from { opacity: 0; transform: scale(0.9); }
-            to { opacity: 1; transform: scale(1); }
-        }
-
-        .modal h2 {
-            margin-top: 0;
-            font-size: 1.5rem;
-            color: #dc2626;
-            border-bottom: 2px solid #dc2626;
-            padding-bottom: 10px;
-            margin-bottom: 20px;
-        }
-
-        .close-btn {
-            float: right;
-            font-size: 1.5rem;
-            font-weight: bold;
+        .action-btn {
+            padding: 8px 15px;
+            border: none;
+            border-radius: 8px;
             cursor: pointer;
-            color: #aaa;
+            font-weight: bold;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            text-decoration: none; /* for <a> tag */
+            color: white;
+            font-size: 0.9rem;
         }
-        .close-btn:hover {
-            color: #333;
+        .action-btn:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+        }
+        .action-btn.primary { background-color: #1e40af; } /* Blue for Add Fake Data */
+        .action-btn.secondary { background-color: #f59e0b; } /* Amber for Report */
+        .action-btn.success { background-color: #10b981; } /* Green for Pre-Report */
+        .action-btn.danger { background-color: #dc2626; } /* Red for Delete All */
+
+        /* Custom Marker Icon Styles */
+        .circle-icon {
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            line-height: 20px;
+            text-align: center;
+            color: white;
+            font-size: 10px;
+            font-weight: bold;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+            border: 2px solid white;
         }
 
-        /* 메시지 박스 스타일 */
+        .triangle-icon {
+            /* Using a div and Font Awesome for a distinctive pin look */
+            width: 24px;
+            height: 24px;
+            text-align: center;
+            line-height: 24px;
+            color: white;
+            font-size: 14px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+            border-radius: 50%;
+        }
+
+        .temp-pin-icon {
+            font-size: 24px;
+            text-shadow: 0 2px 5px rgba(0,0,0,0.5);
+            color: #1e40af;
+        }
+        
+        /* MessageBox Styles */
         #messageBox {
             position: fixed;
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
             padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-            z-index: 1100;
-            display: none;
+            border-radius: 12px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            z-index: 2000;
             text-align: center;
-            max-width: 80%;
-            min-width: 250px;
+            min-width: 300px;
             font-weight: bold;
-            font-size: 1rem;
-            line-height: 1.4;
-        }
-        .message-success { background-color: #d1fae5; color: #047857; border: 2px solid #065f46; }
-        .message-error { background-color: #fee2e2; color: #b91c1c; border: 2px solid #991b1b; }
-        .message-info { background-color: #dbeafe; color: #1e40af; border: 2px solid #1e3a8a; }
-        .message-box-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.1);
-            z-index: 1099;
             display: none;
+            color: #333;
         }
 
+        #messageBox.info { background-color: #bfdbfe; border: 2px solid #3b82f6; }
+        #messageBox.success { background-color: #d1fae5; border: 2px solid #10b981; }
+        #messageBox.error { background-color: #fee2e2; border: 2px solid #ef4444; }
+
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1001;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.4);
+            backdrop-filter: blur(3px);
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background-color: #fefefe;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+            max-width: 400px;
+            width: 90%;
+            position: relative;
+        }
+        .modal-content h2 {
+            margin-top: 0;
+            color: #10b981;
+            border-bottom: 2px solid #d1fae5;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+            font-size: 1.5rem;
+        }
+        .modal-content label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #4b5563;
+            font-size: 0.9rem;
+        }
+        .modal-content input, .modal-content select {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 15px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            box-sizing: border-box;
+        }
+        .modal-content button {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            border-radius: 8px;
+            background-color: #10b981;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .modal-content button:hover:not(:disabled) {
+            background-color: #059669;
+        }
+        .modal-content button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .close {
+            position: absolute;
+            top: 10px;
+            right: 20px;
+            font-size: 28px;
+            font-weight: bold;
+            color: #aaa;
+            cursor: pointer;
+            line-height: 1;
+        }
+        .close:hover,
+        .close:focus {
+            color: #333;
+            text-decoration: none;
+        }
+
+        /* --- New Legend Styles (범례 스타일) --- */
+        .legend {
+            position: absolute;
+            bottom: 20px;
+            right: 10px;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 15px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            z-index: 1000; /* Ensure it's above the map */
+            max-width: 250px;
+            line-height: 1.6;
+        }
+        .legend h3 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 1.1rem;
+            color: #1f2937;
+            border-bottom: 2px solid #e5e7eb;
+            padding-bottom: 5px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+            font-size: 0.9rem;
+        }
+        .legend-icon {
+            width: 14px;
+            height: 14px;
+            margin-right: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            color: white;
+            font-weight: bold;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+        /* Icon Shapes */
+        .legend-icon.circle {
+            border-radius: 50%;
+        }
+        .legend-icon.triangle {
+            width: 0;
+            height: 0;
+            background: none; /* No background needed for CSS triangle */
+            box-shadow: none;
+            border-left: 7px solid transparent;
+            border-right: 7px solid transparent;
+            /* Color is set via specific class */
+            border-bottom-width: 14px;
+            border-bottom-style: solid;
+        }
+        .legend-icon.square {
+            border-radius: 4px;
+            box-shadow: none;
+            color: inherit; /* Inherit color for the pin icon */
+            font-size: 1.2rem;
+            width: auto;
+            height: auto;
+        }
+        /* Icon Colors */
+        .legend-icon.red { background-color: #dc2626; border-bottom-color: #dc2626; }
+        .legend-icon.orange { background-color: #ff8c00; border-bottom-color: #ff8c00; }
+        .legend-icon.blue { color: #1e40af; } /* Pin icon color */
+
+        /* Pre-Report Area Visual */
+        .legend-icon.area {
+             width: 14px;
+             height: 14px;
+             border: 2px solid #10b981; /* Green border */
+             background-color: rgba(16, 185, 129, 0.3); /* Transparent Green fill */
+             border-radius: 50%;
+             box-shadow: none;
+        }
     </style>
 </head>
 <body>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    
-    <!-- 타이틀 -->
-    <h1 class="text-xl md:text-2xl font-bold bg-white p-3 shadow-md">
-        <i class="fas fa-fire-extinguisher text-red-600 mr-2"></i> 불법 소각 감지 시스템 대시보드
-    </h1>
-
-    <!-- 컨트롤 패널 -->
+    <h1>불법 소각 감지 지도 (Illegal Burning Detection Map)</h1>
     <div class="control-panel">
-        <button onclick="openPreReportModal()" class="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-lg transition duration-200 shadow-md flex items-center">
-            <i class="fas fa-flag-checkered mr-2"></i> 소각 사전 신고
-        </button>
-        <button onclick="openManualDataModal()" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg transition duration-200 shadow-md flex items-center">
-            <i class="fas fa-thermometer-half mr-2"></i> 직접 데이터 입력
-        </button>
-        <button onclick="fetchData()" class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg transition duration-200 shadow-md flex items-center">
-            <i class="fas fa-sync-alt mr-2"></i> 데이터 새로고침
-        </button>
-        <button onclick="confirmDeleteAll()" class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg transition duration-200 shadow-md flex items-center">
-            <i class="fas fa-eraser mr-2"></i> 전체 데이터 삭제
-        </button>
+        <button id="addFakeDataBtn" class="action-btn primary"><i class="fas fa-plus"></i> 가짜 데이터 추가</button>
+        <a href="citizen_report.html" class="action-btn secondary"><i class="fas fa-bullhorn"></i> 신고하기</a>
+        <button id="addPreReportBtn" class="action-btn success"><i class="fas fa-calendar-check"></i> 소각 사전 신고</button>
+        <button id="deleteAllBtn" class="action-btn danger"><i class="fas fa-trash-alt"></i> 데이터 모두 삭제 (Admin)</button>
     </div>
 
-    <!-- 지도 영역 -->
-    <div id="map"></div>
+    <div id="map">
+        <!-- 지도 레전드 (범례) -->
+        <div class="legend">
+            <h3>지도 범례 (Legend)</h3>
+            
+            <!-- A. 직접 감지 (Direct Detection - Circle) -->
+            <div class="legend-item">
+                <div class="legend-icon circle red"></div>
+                직접 감지 (🚨 불법 소각 의심)
+            </div>
+            <div class="legend-item">
+                <div class="legend-icon circle orange"></div>
+                직접 감지 (✅ 사전 신고됨)
+            </div>
 
-    <!-- 메시지 박스 오버레이 -->
-    <div id="messageBoxOverlay" class="message-box-overlay" onclick="closeMessageBox()"></div>
+            <!-- B. 시민 신고 (Citizen Report - Triangle) -->
+            <div class="legend-item">
+                <div class="legend-icon triangle red"></div>
+                시민 신고 (🚨 불법 소각 의심)
+            </div>
+            <div class="legend-item">
+                <div class="legend-icon triangle orange"></div>
+                시민 신고 (✅ 사전 신고됨)
+            </div>
+
+            <!-- C. 사전 신고 구역 (Pre-Report Area - L.Circle) -->
+            <div class="legend-item">
+                <div class="legend-icon area"></div>
+                사전 신고 구역 (반경)
+            </div>
+
+            <!-- D. 지도 클릭 위치 (Temporary Pin) -->
+            <div class="legend-item">
+                <div class="legend-icon square blue"><i class="fas fa-thumbtack"></i></div>
+                임시 위치 핀 (클릭/드래그)
+            </div>
+        </div>
+    </div>
+
+    <!-- 소각 사전 신고 모달 (Pre-Report Modal) -->
+    <div id="preReportModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closePreReportModal()">&times;</span>
+            <h2><i class="fas fa-calendar-check"></i> 소각 사전 신고</h2>
+            <p style="margin-bottom: 20px; font-size: 0.9rem; color: #6b7280;">
+                지도를 클릭하여 위치를 선택하고 소각 예정 정보를 입력해주세요.
+            </p>
+            <form id="preReportForm">
+                <label for="preLat">위도 (Latitude):</label>
+                <input type="text" id="preLat" name="preLat" required readonly>
+                
+                <label for="preLon">경도 (Longitude):</label>
+                <input type="text" id="preLon" name="preLon" required readonly>
+
+                <label for="preStartDate">시작일시 (Start Date/Time):</label>
+                <input type="datetime-local" id="preStartDate" name="preStartDate" required>
+
+                <label for="preEndDate">종료일시 (End Date/Time):</label>
+                <input type="datetime-local" id="preEndDate" name="preEndDate" required>
+
+                <label for="preRangeKm">영향 반경 (Km):</label>
+                <input type="number" id="preRangeKm" name="preRangeKm" value="0.1" min="0.01" step="0.01" required>
+
+                <button type="submit" id="preReportSubmitBtn"><i class="fas fa-upload"></i> 신고 등록</button>
+            </form>
+        </div>
+    </div>
+
     <!-- 메시지 박스 -->
     <div id="messageBox"></div>
 
-    <!-- 1. 소각 사전 신고 모달 -->
-    <div id="preReportModal" class="modal">
-        <div class="modal-content">
-            <span class="close-btn" onclick="closeModal('preReportModal')">&times;</span>
-            <h2 class="text-red-600">소각 사전 신고</h2>
-            
-            <div class="space-y-4">
-                <!-- 날짜 및 시간 입력 필드 수정 -->
-                <div>
-                    <label for="pre_start_date" class="block text-sm font-medium text-gray-700">소각 시작 날짜 및 시간</label>
-                    <input type="datetime-local" id="pre_start_date" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-red-500 focus:border-red-500">
-                </div>
-                <div>
-                    <label for="pre_end_date" class="block text-sm font-medium text-gray-700">소각 종료 날짜 및 시간</label>
-                    <input type="datetime-local" id="pre_end_date" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-red-500 focus:border-red-500">
-                </div>
-                <!-- /날짜 및 시간 입력 필드 수정 -->
-                
-                <div>
-                    <label for="pre_range_km" class="block text-sm font-medium text-gray-700">유효 범위 (Km)</label>
-                    <input type="number" id="pre_range_km" step="0.01" min="0.01" value="0.1" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-red-500 focus:border-red-500">
-                </div>
-                <div>
-                    <label for="pre_lat" class="block text-sm font-medium text-gray-700">위도 (Lat)</label>
-                    <input type="text" id="pre_lat" readonly class="mt-1 block w-full p-2 border border-gray-300 bg-gray-100 rounded-md shadow-sm">
-                </div>
-                <div>
-                    <label for="pre_lon" class="block text-sm font-medium text-gray-700">경도 (Lon)</label>
-                    <input type="text" id="pre_lon" readonly class="mt-1 block w-full p-2 border border-gray-300 bg-gray-100 rounded-md shadow-sm">
-                </div>
-                
-                <p class="text-sm text-gray-500">지도를 클릭하여 위치를 설정하거나, 핀을 드래그하여 정확한 위치를 지정하세요.</p>
-                
-                <button onclick="submitPreReport(this)" id="preReportSubmitBtn" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition duration-200 shadow-lg mt-4">
-                    사전 신고 등록
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <!-- 2. 직접 감지 데이터 입력 모달 -->
-    <div id="manualDataModal" class="modal">
-        <div class="modal-content">
-            <span class="close-btn" onclick="closeModal('manualDataModal')">&times;</span>
-            <h2 class="text-blue-600">직접 감지 데이터 등록</h2>
-            
-            <div class="space-y-4">
-                <!-- 시간 필드를 온도 필드로 수정 -->
-                <div>
-                    <label for="manual_temp" class="block text-sm font-medium text-gray-700">온도 (°C)</label>
-                    <!-- 시간(time) 대신 온도(temp)를 입력받습니다. -->
-                    <input type="number" id="manual_temp" step="1" placeholder="감지 온도 (°C, 예: 300)" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500">
-                </div>
-                <!-- /시간 필드를 온도 필드로 수정 -->
-                
-                <div>
-                    <label for="manual_smoke" class="block text-sm font-medium text-gray-700">연기량 (0.0~1.0)</label>
-                    <input type="number" id="manual_smoke" step="0.01" min="0" max="1" value="0.5" placeholder="0.0~1.0 사이 값" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500">
-                </div>
-                <div>
-                    <label for="manual_lat" class="block text-sm font-medium text-gray-700">위도 (Lat)</label>
-                    <input type="text" id="manual_lat" readonly class="mt-1 block w-full p-2 border border-gray-300 bg-gray-100 rounded-md shadow-sm">
-                </div>
-                <div>
-                    <label for="manual_lon" class="block text-sm font-medium text-gray-700">경도 (Lon)</label>
-                    <input type="text" id="manual_lon" readonly class="mt-1 block w-full p-2 border border-gray-300 bg-gray-100 rounded-md shadow-sm">
-                </div>
-                
-                <p class="text-sm text-gray-500">지도를 클릭하여 위치를 설정하거나, 핀을 드래그하여 정확한 위치를 지정하세요.</p>
-                
-                <button onclick="submitManualData(this)" id="manualSubmitBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg transition duration-200 shadow-lg mt-4">
-                    데이터 등록
-                </button>
-            </div>
-        </div>
-    </div>
-    
     <script>
-        // 전역 변수
+        // --- 1. 전역 변수 설정 ---
         let map;
-        let lastClickedLatLng = null; // 마지막 클릭/드래그된 위치
-        let tempMarker = null; // 임시 핀 마커
-        let markers = new L.LayerGroup(); // 모든 마커 그룹
-        let isMessageBoxOpen = false;
+        let markers = new L.LayerGroup();
+        let preReportsCircles = new L.LayerGroup(); // 사전 신고 구역 표시용
+        let lastClickedLatLng = null; // 마지막 클릭된 좌표 저장
+        let tempMarker = null; // 지도 클릭 시 임시 마커 저장
+
+        // --- 2. Leaflet Custom Icon 생성 함수 (DivIcon 사용) ---
+        function createDivIcon(htmlContent, className, color) {
+            return L.divIcon({
+                html: `<div class="${className}" style="background-color: ${color};"><i class="${htmlContent}"></i></div>`,
+                className: 'custom-div-icon', // Leaflet 기본 스타일 오버라이드용
+                iconSize: [24, 24],
+                iconAnchor: [12, 12],
+                popupAnchor: [0, -10]
+            });
+        }
         
-        // --- 1. 유틸리티 함수 (모달, 메시지 박스) ---
-
-        function openModal(modalId) {
-            const modal = document.getElementById(modalId);
-            modal.style.display = 'flex';
+        // 직접 감지용 원형 아이콘 생성 (실제 마커 렌더링에 사용)
+        function createCircleIcon(color) {
+            return L.divIcon({
+                html: `<div class="circle-icon" style="background-color: ${color};">S</div>`,
+                className: 'custom-div-icon',
+                iconSize: [24, 24],
+                iconAnchor: [12, 12],
+                popupAnchor: [0, -10]
+            });
         }
 
-        function closeModal(modalId) {
-            const modal = document.getElementById(modalId);
-            modal.style.display = 'none';
+        // 시민 신고용 삼각형 아이콘 (실제 마커 렌더링에 사용) - 여기서는 핀 모양으로 대체
+        function createTriangleIcon(color) {
+             return L.divIcon({
+                html: `<div class="triangle-icon" style="background-color: ${color};"><i class="fas fa-map-pin"></i></div>`,
+                className: 'custom-div-icon',
+                iconSize: [24, 30],
+                iconAnchor: [12, 30],
+                popupAnchor: [0, -25]
+            });
         }
 
-        function showMessageBox(message, type = 'info') {
+        // --- 3. 유틸리티 함수 (거리 및 시간 비교) ---
+
+        /**
+         * 두 좌표 간의 거리를 킬로미터(Km) 단위로 계산합니다.
+         * @param {number} lat1 - 첫 번째 위도
+         * @param {number} lon1 - 첫 번째 경도
+         * @param {number} lat2 - 두 번째 위도
+         * @param {number} lon2 - 두 번째 경도
+         * @returns {number} 거리 (Km)
+         */
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371; // 지구 반지름 (킬로미터)
+            const dLat = (lat2 - lat1) * (Math.PI / 180);
+            const dLon = (lon2 - lon1) * (Math.PI / 180);
+            const a = 
+                Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c; // 거리 (Km)
+        }
+
+        /**
+         * 감지/신고 데이터가 사전 신고 구역 및 시간 범위 내에 있는지 확인합니다.
+         * @param {number} lat - 감지/신고 위도
+         * @param {number} lon - 감지/신고 경도 (timestamp)
+         * @param {number} time - 감지/신고 시간 (timestamp)
+         * @param {Array<Object>} preReports - 사전 신고 데이터 목록
+         * @returns {boolean} 사전 신고 범위 내에 있으면 true
+         */
+        function isInPreReport(lat, lon, time, preReports) {
+            return preReports.some(pre => {
+                const distance = calculateDistance(lat, lon, pre.lat, pre.lon);
+                const isWithinRange = distance <= pre.rangeKm;
+                const isWithinTime = time >= pre.startDate && time <= pre.endDate;
+                
+                // console.log(`Check: Distance=${distance.toFixed(3)}km (Max: ${pre.rangeKm}km), Time: ${isWithinTime ? 'In' : 'Out'}`);
+                return isWithinRange && isWithinTime;
+            });
+        }
+
+        // --- 4. 메시지 박스 및 모달 제어 함수 ---
+
+        function showMessageBox(message, type) {
             const box = document.getElementById('messageBox');
-            const overlay = document.getElementById('messageBoxOverlay');
             box.textContent = message;
-            box.className = `message-${type}`; // 클래스 변경
+            box.className = ''; // 기존 클래스 제거
+            box.classList.add(type);
             box.style.display = 'block';
-            overlay.style.display = 'block';
-            isMessageBoxOpen = true;
+            setTimeout(() => {
+                box.style.display = 'none';
+            }, 4000); // 4초 후 자동 숨김
         }
 
         function closeMessageBox() {
             document.getElementById('messageBox').style.display = 'none';
-            document.getElementById('messageBoxOverlay').style.display = 'none';
-            isMessageBoxOpen = false;
         }
 
-        // --- 2. Leaflet 관련 함수 (마커 생성 등) ---
-
-        // 커스텀 DIV 아이콘 생성 함수
-        function createDivIcon(html, className, color) {
-            return L.divIcon({
-                className: className,
-                html: `<div style="color: ${color}; font-size: 24px; text-shadow: 0 0 2px rgba(0,0,0,0.5);">${html}</div>`,
-                iconSize: [24, 24],
-                iconAnchor: [12, 24], // 핀 끝이 위치를 가리키도록 설정
-                popupAnchor: [0, -20]
-            });
-        }
-
-        // 삼각형 아이콘 (시민 신고)
-        function createTriangleIcon(color) {
-            return createDivIcon('<i class="fas fa-exclamation-triangle"></i>', 'citizen-report-icon', color);
-        }
-
-        // 원형 아이콘 (직접 감지)
-        function createCircleIcon(color) {
-            return createDivIcon('<i class="fas fa-circle-notch fa-spin"></i>', 'direct-data-icon', color);
-        }
-
-        // --- 3. 데이터 입력 모달 열기 ---
+        // 사전 신고 모달 제어
+        const preReportModal = document.getElementById('preReportModal');
+        const preLatInput = document.getElementById('preLat');
+        const preLonInput = document.getElementById('preLon');
+        const preReportSubmitBtn = document.getElementById('preReportSubmitBtn');
 
         function openPreReportModal() {
-            if (!lastClickedLatLng) {
-                showMessageBox('❌ 지도를 클릭하여 소각 위치를 먼저 지정해 주세요.', 'error');
-                return;
-            }
-            document.getElementById('pre_lat').value = lastClickedLatLng.lat.toFixed(6);
-            document.getElementById('pre_lon').value = lastClickedLatLng.lng.toFixed(6);
-            
-            // 날짜/시간 초기값 설정 (선택 사항)
-            const now = new Date();
-            // YYYY-MM-DDTHH:MM 형식으로 포맷팅
-            const isoString = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
-            document.getElementById('pre_start_date').value = isoString;
-            document.getElementById('pre_end_date').value = isoString;
-
-            openModal('preReportModal');
-        }
-
-        function openManualDataModal() {
-            if (!lastClickedLatLng) {
-                showMessageBox('❌ 지도를 클릭하여 감지 위치를 먼저 지정해 주세요.', 'error');
-                return;
-            }
-            document.getElementById('manual_lat').value = lastClickedLatLng.lat.toFixed(6);
-            document.getElementById('manual_lon').value = lastClickedLatLng.lng.toFixed(6);
-            // 온도 필드는 비워두거나 기본값 설정
-            document.getElementById('manual_temp').value = '300';
-            document.getElementById('manual_smoke').value = '0.5';
-
-            openModal('manualDataModal');
-        }
-
-
-        // --- 4. 데이터 전송 (API) ---
-
-        /**
-         * 소각 사전 신고 데이터 전송
-         */
-        async function submitPreReport(submitBtn) {
-            submitBtn.disabled = true;
-            
-            // 날짜/시간 값을 ISO 문자열로 가져온 후 타임스탬프로 변환
-            const startDateStr = document.getElementById('pre_start_date').value;
-            const endDateStr = document.getElementById('pre_end_date').value;
-            const rangeKm = document.getElementById('pre_range_km').value;
-            const lat = document.getElementById('pre_lat').value;
-            const lon = document.getElementById('pre_lon').value;
-
-            // Date.parse는 ISO 8601 문자열을 밀리초 타임스탬프로 변환합니다.
-            const startDate = Date.parse(startDateStr); 
-            const endDate = Date.parse(endDateStr); 
-
-            if (isNaN(startDate) || isNaN(endDate) || !rangeKm || !lat || !lon) {
-                showMessageBox('❌ 모든 필드를 올바르게 입력했는지 확인해 주세요. (날짜/시간 포함)', 'error');
-                submitBtn.disabled = false;
-                return;
-            }
-
-            if (startDate >= endDate) {
-                showMessageBox('❌ 종료 날짜/시간은 시작 날짜/시간보다 늦어야 합니다.', 'error');
-                submitBtn.disabled = false;
-                return;
-            }
-            
-            closeModal('preReportModal');
-            showMessageBox("사전 신고 등록 중...", 'info');
-            
-            try {
-                const payload = {
-                    lat: parseFloat(lat),
-                    lon: parseFloat(lon),
-                    startDate: startDate, // 밀리초 타임스탬프 전송
-                    endDate: endDate,     // 밀리초 타임스탬프 전송
-                    rangeKm: parseFloat(rangeKm)
-                };
-
-                const response = await fetch('/api/add/pre', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                if (response.ok) {
-                    showMessageBox('✅ 사전 신고가 성공적으로 등록되었습니다.', 'success');
-                    fetchData();
-                } else {
-                    const errorData = await response.json().catch(() => ({})); 
-                    showMessageBox(`❌ 사전 신고 등록 실패: ${errorData.message || errorData.error || '서버 오류'}`, 'error');
-                }
-
-            } catch (error) {
-                console.error('사전 신고 API 호출 오류:', error);
-                showMessageBox('❌ 네트워크 오류 또는 서버 응답 오류로 등록에 실패했습니다.', 'error');
-            } finally {
-                submitBtn.disabled = false;
+            if (lastClickedLatLng) {
+                preLatInput.value = lastClickedLatLng.lat.toFixed(6);
+                preLonInput.value = lastClickedLatLng.lng.toFixed(6);
+                preReportModal.style.display = 'flex';
+            } else {
+                showMessageBox("🚨 지도를 클릭하여 소각 예정 위치를 먼저 선택해주세요.", 'error');
             }
         }
 
-        /**
-         * 직접 감지 데이터 (온도, 연기량) 전송
-         */
-        async function submitManualData(submitBtn) {
-            submitBtn.disabled = true;
-
-            // 'manual_time' 대신 'manual_temp'에서 온도를 가져옵니다.
-            const tempStr = document.getElementById('manual_temp').value; 
-            const smokeStr = document.getElementById('manual_smoke').value;
-            const lat = document.getElementById('manual_lat').value;
-            const lon = document.getElementById('manual_lon').value;
-
-            const temp = parseFloat(tempStr);
-            const smoke = parseFloat(smokeStr);
-
-            if (isNaN(temp) || isNaN(smoke) || smoke < 0 || smoke > 1 || !lat || !lon) {
-                showMessageBox('❌ 온도와 연기량(0.0~1.0), 위치를 모두 정확히 입력해 주세요.', 'error');
-                submitBtn.disabled = false;
-                return;
-            }
-            
-            closeModal('manualDataModal');
-            showMessageBox("직접 데이터 등록 중...", 'info');
-            
-            try {
-                const payload = {
-                    lat: parseFloat(lat),
-                    lon: parseFloat(lon),
-                    temp: temp, // 온도 데이터 전송
-                    smoke: smoke,
-                    time: Date.now() // 감지 시간은 현재 시간으로 설정
-                };
-
-                const response = await fetch('/api/add/manual', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                if (response.ok) {
-                    showMessageBox('✅ 직접 감지 데이터가 성공적으로 등록되었습니다.', 'success');
-                    fetchData();
-                } else {
-                    const errorData = await response.json().catch(() => ({})); 
-                    showMessageBox(`❌ 직접 데이터 등록 실패: ${errorData.message || errorData.error || '서버 오류'}`, 'error');
-                }
-
-            } catch (error) {
-                console.error('직접 데이터 API 호출 오류:', error);
-                showMessageBox('❌ 네트워크 오류 또는 서버 응답 오류로 등록에 실패했습니다.', 'error');
-            } finally {
-                submitBtn.disabled = false;
-            }
+        function closePreReportModal() {
+            preReportModal.style.display = 'none';
         }
 
-        // --- 5. 데이터 가져오기 및 시각화 ---
-
-        function isInPreReport(lat, lon, time, preReports) {
-            // 사전 신고된 위치에서 0.1km(기본값) 이내, 지정된 시간 범위 내인지 확인
-            const point = L.latLng(lat, lon);
-            
-            return preReports.some(report => {
-                const reportCenter = L.latLng(report.lat, report.lon);
-                const distanceMeters = point.distanceTo(reportCenter);
-                const rangeMeters = (report.rangeKm || 0.1) * 1000;
-                
-                // 거리 및 시간 비교
-                return distanceMeters <= rangeMeters && time >= report.startDate && time <= report.endDate;
-            });
-        }
-
-        function renderData(directData, citizenReports, preReports) {
-            // 기존 마커 제거
-            markers.clearLayers();
-
-            try {
-                // A. 직접 감지 데이터 (directData) 처리
-                directData.forEach(row => {
-                    // directData에는 이제 'time', 'temp', 'smoke'가 포함됩니다.
-                    const isReported = isInPreReport(row.lat, row.lon, row.time, preReports);
-                    
-                    // 불법 소각 의심 기준: 연기량 0.4 초과 AND 온도 100°C 초과 (임시 기준)
-                    const isBurn = row.smoke > 0.4 && row.temp > 100;
-
-                    let color;
-                    if (isReported) {
-                        color = '#ff8c00'; // 주황: 신고된 소각
-                    } else if (isBurn) {
-                        color = '#dc2626'; // 빨강: 불법 소각 의심
-                    } else {
-                        color = '#10b981'; // 초록: 정상 범위
-                    }
-
-                    const icon = createCircleIcon(color);
-                    
-                    // 팝업 내용 수정: '온도' 필드 추가 및 '시간' 포맷팅 개선
-                    const marker = L.marker([row.lat, row.lon], { icon: icon }).bindPopup(`
-                        <b>[직접 감지]</b><br>
-                        <b>시간:</b> ${new Date(row.time).toLocaleString()}<br>
-                        <b>온도:</b> ${row.temp}°C<br> 
-                        <b>연기량:</b> ${row.smoke}<br>
-                        <b>신고 여부:</b> ${isReported ? '✅ 사전 신고됨' : (isBurn ? '🚨 불법 소각 의심' : '🟢 정상')}<br>
-                        <small>등록 시간: ${new Date(row.createdAt).toLocaleString()}</small>
-                    `);
-                    markers.addLayer(marker);
-                });
-
-                // B. 시민 신고 데이터 (citizenReports) 처리
-                citizenReports.forEach(row => {
-                    // citizenReports에는 'time'(신고된 시점)이 포함됩니다.
-                    const isReported = isInPreReport(row.lat, row.lon, row.time, preReports);
-                    const color = isReported ? '#ff8c00' : '#dc2626'; 
-                    const icon = createTriangleIcon(color);
-
-                    const marker = L.marker([row.lat, row.lon], { icon: icon }).bindPopup(`
-                        <b>[시민 신고]</b><br>
-                        <b>신고 시점:</b> ${new Date(row.time).toLocaleString()}<br>
-                        <b>신고 여부:</b> ${isReported ? '✅ 사전 신고됨' : '🚨 불법 소각 의심'}
-                    `);
-                    markers.addLayer(marker);
-                });
-
-                map.addLayer(markers);
-
-            } catch (error) {
-                console.error('데이터 로딩 및 시각화 오류:', error);
-                showMessageBox('❌ 데이터 시각화 중 오류 발생.', 'error');
-            }
-        }
-
+        // --- 5. 데이터 Fetch 및 시각화 함수 ---
+        
+        // 서버에서 모든 데이터 (감지, 신고, 사전신고)를 가져와 지도에 표시
         async function fetchData() {
-            showMessageBox("데이터를 불러오는 중...", 'info');
             try {
-                // index.js API 호출
+                showMessageBox("데이터를 불러오는 중입니다...", 'info');
+                
                 const response = await fetch('/api/data');
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
                 const data = await response.json();
                 
-                // Firestore Timestamp는 초 단위로 저장되므로 밀리초로 변환합니다.
-                const preReports = data.preReports.map(report => ({
-                    ...report,
-                    startDate: report.startDate, // 이미 클라이언트에서 ms로 전송
-                    endDate: report.endDate
-                }));
+                showMessageBox("✅ 데이터 로딩 완료!", 'success');
+                visualizeData(data.directDetections, data.citizenReports, data.preReports);
 
-                const directData = data.directData.map(d => ({
-                    ...d,
-                    time: d.time, // 클라이언트에서 ms로 전송
-                    createdAt: d.createdAt ? d.createdAt.seconds * 1000 : Date.now()
-                }));
-
-                const citizenReports = data.citizenReports.map(r => ({
-                    ...r,
-                    time: r.time, // 클라이언트에서 ms로 전송
-                    createdAt: r.createdAt ? r.createdAt.seconds * 1000 : Date.now()
-                }));
-                
-                renderData(directData, citizenReports, preReports);
-                closeMessageBox();
-                
             } catch (error) {
                 console.error('데이터 로딩 오류:', error);
-                showMessageBox(`❌ 데이터 로딩에 실패했습니다: ${error.message}. Vercel API 서버 상태를 확인하세요.`, 'error');
+                showMessageBox('❌ 데이터를 불러오는 데 실패했습니다. 서버 상태를 확인하세요.', 'error');
+            }
+        }
+
+        // 지도 시각화
+        function visualizeData(directDetections, citizenReports, preReports) {
+            try {
+                // 기존 마커 및 원 제거
+                markers.clearLayers();
+                preReportsCircles.clearLayers();
+
+                // A. 사전 신고 구역 (preReports) 시각화 (L.Circle)
+                preReports.forEach(pre => {
+                    // Km를 미터로 변환 (Leaflet CircleMarker는 미터 단위)
+                    const radiusMeters = pre.rangeKm * 1000; 
+
+                    // 사전 신고 구역을 반투명한 녹색 원으로 표시
+                    const circle = L.circle([pre.lat, pre.lon], {
+                        color: '#10b981', // Green
+                        fillColor: '#10b981',
+                        fillOpacity: 0.3,
+                        radius: radiusMeters 
+                    }).bindPopup(`
+                        <b>[사전 신고 구역]</b><br>
+                        <b>시작:</b> ${new Date(pre.startDate).toLocaleString()}<br>
+                        <b>종료:</b> ${new Date(pre.endDate).toLocaleString()}<br>
+                        <b>반경:</b> ${pre.rangeKm} Km
+                    `);
+                    preReportsCircles.addLayer(circle);
+                });
+                map.addLayer(preReportsCircles);
+
+                // B. 직접 감지 데이터 (directDetections) 처리
+                directDetections.forEach(row => {
+                    const isReported = isInPreReport(row.lat, row.lon, row.time, preReports);
+                    
+                    // 신고 여부에 따라 마커 색상 결정
+                    // 사전 신고됨 (Orange) vs. 불법 소각 의심 (Red)
+                    const color = isReported ? '#ff8c00' : '#dc2626'; 
+                    const icon = createCircleIcon(color);
+
+                    const marker = L.marker([row.lat, row.lon], { icon: icon }).bindPopup(`
+                        <b>[직접 감지]</b><br>
+                        <b>시간:</b> ${new Date(row.time).toLocaleString()}<br>
+                        <b>연기량:</b> ${row.smoke}<br>
+                        <b>신고 여부:</b> ${isReported ? '✅ 사전 신고됨' : '🚨 불법 소각 의심'}
+                    `);
+                    markers.addLayer(marker);
+                });
+
+                // C. 시민 신고 데이터 (citizenReports) 처리
+                citizenReports.forEach(row => {
+                    const isReported = isInPreReport(row.lat, row.lon, row.time, preReports);
+                    
+                    // 신고 여부에 따라 마커 색상 결정
+                    // 사전 신고됨 (Orange) vs. 불법 소각 의심 (Red)
+                    const color = isReported ? '#ff8c00' : '#dc2626'; 
+                    const icon = createTriangleIcon(color);
+
+                    const marker = L.marker([row.lat, row.lon], { icon: icon }).bindPopup(`
+                        <b>[시민 신고]</b><br>
+                        <b>시간:</b> ${new Date(row.time).toLocaleString()}<br>
+                        <b>신고 여부:</b> ${isReported ? '✅ 사전 신고됨' : '🚨 불법 소각 의심'}
+                    `);
+                    markers.addLayer(marker);
+                });
+
+                map.addLayer(markers);
+            } catch (error) {
+                console.error('데이터 로딩 및 시각화 오류:', error);
             }
         }
         
-        // --- 6. 지도 클릭 및 드래그 이벤트 (임시 핀 및 좌표 저장) ---
-        function setupMapEvents() {
-            map.on('click', (e) => {
-                lastClickedLatLng = e.latlng;
-
-                // 1. 기존 임시 마커 제거
-                if (tempMarker) {
-                    map.removeLayer(tempMarker);
-                }
-
-                // 2. 새 임시 마커 생성 (파란색 핀) - draggable: true 추가
-                const pinIcon = createDivIcon('<i class="fas fa-thumbtack"></i>', 'temp-pin-icon', '#1e40af'); // Dark Blue Pin
-                tempMarker = L.marker(lastClickedLatLng, { icon: pinIcon, draggable: true }).addTo(map);
-                tempMarker.bindPopup(`<b>클릭된 위치:</b><br>Lat: ${lastClickedLatLng.lat.toFixed(6)}<br>Lon: ${lastClickedLatLng.lng.toFixed(6)}`).openPopup();
-                
-                // 3. 드래그 이벤트 리스너 추가
-                tempMarker.on('dragend', function(event) {
-                    const marker = event.target;
-                    const position = marker.getLatLng();
-                    lastClickedLatLng = position; // 전역 좌표 업데이트
-                    
-                    // 팝업 내용 업데이트
-                    marker.setPopupContent(`<b>드래그된 위치:</b><br>Lat: ${position.lat.toFixed(6)}<br>Lon: ${position.lng.toFixed(6)}`).openPopup();
-
-                    // 모달이 열려있는 경우, 좌표 필드도 업데이트
-                    const preReportModal = document.getElementById('preReportModal');
-                    const manualDataModal = document.getElementById('manualDataModal');
-
-                    if (preReportModal.style.display === 'flex') {
-                        document.getElementById('pre_lat').value = position.lat.toFixed(6);
-                        document.getElementById('pre_lon').value = position.lng.toFixed(6);
-                    } else if (manualDataModal.style.display === 'flex') {
-                        document.getElementById('manual_lat').value = position.lat.toFixed(6);
-                        document.getElementById('manual_lon').value = position.lng.toFixed(6);
-                    }
-                });
-            });
-        }
-        
-        // --- 7. 전체 삭제 확인 ---
-        function confirmDeleteAll() {
-            if (isMessageBoxOpen) return;
-
-            const box = document.getElementById('messageBox');
-            const overlay = document.getElementById('messageBoxOverlay');
-            
-            box.innerHTML = `
-                <p class="text-lg mb-4">⚠️ 경고: 데이터베이스의 모든 데이터를 삭제하시겠습니까?</p>
-                <button id="confirmDeleteBtn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg mr-2 transition duration-200">
-                    삭제 확인
-                </button>
-                <button onclick="closeMessageBox()" class="bg-gray-400 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg transition duration-200">
-                    취소
-                </button>
-            `;
-            box.className = 'message-error';
-            box.style.display = 'block';
-            overlay.style.display = 'block';
-            isMessageBoxOpen = true;
-
-            document.getElementById('confirmDeleteBtn').onclick = deleteAllData;
-        }
-
+        /**
+         * 💡 모든 데이터 삭제 (관리자용)
+         */
         async function deleteAllData() {
-            closeMessageBox();
             showMessageBox("데이터 삭제 중...", 'info');
             
             try {
@@ -644,11 +592,158 @@
                 attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             }).addTo(map);
 
-            setupMapEvents(); // 지도 이벤트 설정
-            fetchData();      // 초기 데이터 로드
+            // 초기 데이터 로드
+            fetchData();
+            
+            
+            // =================================================================
+            // 🐛 오류 수정: map 객체가 생성된 후 이벤트 리스너를 바인딩합니다.
+            // =================================================================
+            
+            // --- 6. 지도 클릭 및 드래그 이벤트 (임시 핀 및 좌표 저장) ---
+            map.on('click', (e) => {
+                lastClickedLatLng = e.latlng;
 
-            // 맵 크기 변경 시 타일 다시 로드
-            window.addEventListener('resize', () => map.invalidateSize());
+                // 1. 기존 임시 마커 제거
+                if (tempMarker) {
+                    map.removeLayer(tempMarker);
+                }
+
+                // 2. 새 임시 마커 생성 (파란색 핀) - draggable: true 추가
+                const pinIcon = L.divIcon({
+                    html: '<i class="fas fa-thumbtack"></i>',
+                    className: 'temp-pin-icon',
+                    iconSize: [24, 24],
+                    iconAnchor: [0, 24],
+                    popupAnchor: [10, -20]
+                });
+                
+                tempMarker = L.marker(lastClickedLatLng, { icon: pinIcon, draggable: true }).addTo(map);
+                tempMarker.bindPopup(`<b>클릭된 위치:</b><br>Lat: ${lastClickedLatLng.lat.toFixed(6)}<br>Lon: ${lastClickedLatLng.lng.toFixed(6)}`).openPopup();
+                
+                // 3. 드래그 이벤트 리스너 추가
+                tempMarker.on('dragend', function(event) {
+                    const marker = event.target;
+                    const position = marker.getLatLng();
+                    lastClickedLatLng = position; // 전역 좌표 업데이트
+                    
+                    // 팝업 내용 업데이트
+                    marker.setPopupContent(`<b>드래그된 위치:</b><br>Lat: ${position.lat.toFixed(6)}<br>Lon: ${position.lng.toFixed(6)}`).openPopup();
+
+                    // 모달이 열려있는 경우, 좌표 필드 업데이트
+                    if (preReportModal.style.display === 'flex') {
+                        preLatInput.value = position.lat.toFixed(6);
+                        preLonInput.value = position.lng.toFixed(6);
+                    }
+                });
+
+                // 모달이 열려있는 경우, 좌표 필드 업데이트
+                if (preReportModal.style.display === 'flex') {
+                    preLatInput.value = lastClickedLatLng.lat.toFixed(6);
+                    preLonInput.value = lastClickedLatLng.lng.toFixed(6);
+                }
+            });
+
+
+            // --- 7. 이벤트 리스너 및 API 호출 (버튼) ---
+            
+            // 가짜 데이터 추가 버튼 (Direct Detection)
+            document.getElementById('addFakeDataBtn').addEventListener('click', async () => {
+                if (!lastClickedLatLng) {
+                    showMessageBox("🚨 지도를 클릭하여 감지 위치를 먼저 선택해주세요.", 'error');
+                    return;
+                }
+
+                showMessageBox("가짜 데이터 (직접 감지) 추가 중...", 'info');
+
+                const payload = {
+                    lat: lastClickedLatLng.lat,
+                    lon: lastClickedLatLng.lng,
+                    smoke: Math.floor(Math.random() * 100), // 0 ~ 99
+                    time: Date.now()
+                };
+
+                try {
+                    const response = await fetch('/api/add/direct', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (response.ok) {
+                        showMessageBox('✅ 직접 감지 데이터가 성공적으로 추가되었습니다.', 'success');
+                        fetchData(); // 성공 후 지도 새로고침
+                    } else {
+                        const errorData = await response.json().catch(() => ({})); 
+                        showMessageBox(`❌ 추가 실패: ${errorData.message || errorData.error || '서버 오류'}`, 'error');
+                    }
+                } catch (error) {
+                    console.error('API 호출 오류:', error);
+                    showMessageBox('❌ 네트워크 오류로 데이터 추가에 실패했습니다.', 'error');
+                }
+            });
+
+            // 사전 신고 버튼 (Modal Open)
+            document.getElementById('addPreReportBtn').addEventListener('click', openPreReportModal);
+
+            // 사전 신고 폼 제출 처리
+            document.getElementById('preReportForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                preReportSubmitBtn.disabled = true;
+
+                const form = e.target;
+                const lat = parseFloat(form.preLat.value);
+                const lon = parseFloat(form.preLon.value);
+                const startDate = new Date(form.preStartDate.value).getTime();
+                const endDate = new Date(form.preEndDate.value).getTime();
+                const rangeKm = parseFloat(form.preRangeKm.value);
+
+                if (startDate >= endDate) {
+                    showMessageBox("🚨 종료 일시는 시작 일시보다 늦어야 합니다.", 'error');
+                    preReportSubmitBtn.disabled = false;
+                    return;
+                }
+
+                showMessageBox("소각 사전 신고 정보 등록 중...", 'info');
+                
+                const payload = {
+                    lat, lon, startDate, endDate, rangeKm
+                };
+
+                try {
+                    const response = await fetch('/api/add/pre', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (response.ok) {
+                        closePreReportModal();
+                        showMessageBox('✅ 소각 사전 신고가 성공적으로 등록되었습니다.', 'success');
+                        fetchData(); // 성공 후 지도 새로고침
+                    } else {
+                        const errorData = await response.json().catch(() => ({})); 
+                        showMessageBox(`❌ 등록 실패: ${errorData.message || errorData.error || '서버 오류'}`, 'error');
+                    }
+                } catch (error) {
+                    console.error('API 호출 오류:', error);
+                    showMessageBox('❌ 네트워크 오류로 신고 등록에 실패했습니다.', 'error');
+                } finally {
+                    preReportSubmitBtn.disabled = false;
+                }
+            });
+            
+            // 데이터 모두 삭제 버튼 (Admin)
+            document.getElementById('deleteAllBtn').addEventListener('click', () => {
+                // 경고 메시지 대신 메시지 박스를 사용
+                const confirmMessage = "⚠️ 경고: 데이터베이스의 모든 데이터를 영구적으로 삭제하시겠습니까? (되돌릴 수 없습니다!)";
+                showMessageBox(confirmMessage, 'error');
+
+                // 간소화된 버전: 바로 삭제 함수 호출 (실제 환경에서는 인증 필요)
+                if (window.confirm("정말로 모든 데이터를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.")) {
+                    deleteAllData();
+                }
+            });
         }
 
         window.onload = initializeMap;
