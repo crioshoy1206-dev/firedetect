@@ -48,7 +48,8 @@
             opacity: 0.9;
             transform: translateY(-1px);
         }
-        .action-btn.primary { background-color: #1e40af; } /* Blue for Add Fake Data */
+        /* [수정] 직접 감지 데이터 추가 버튼 스타일 */
+        .action-btn.primary { background-color: #059669; } /* Green for Add Direct Data */
         .action-btn.secondary { background-color: #f59e0b; } /* Amber for Report */
         .action-btn.success { background-color: #10b981; } /* Green for Pre-Report */
         .action-btn.danger { background-color: #dc2626; } /* Red for Delete All */
@@ -133,7 +134,8 @@
         }
         .modal-content h2 {
             margin-top: 0;
-            color: #10b981;
+            /* [수정] 직접 감지 모달 헤더 색상 변경 */
+            color: #059669; 
             border-bottom: 2px solid #d1fae5;
             padding-bottom: 10px;
             margin-bottom: 20px;
@@ -159,14 +161,15 @@
             padding: 10px;
             border: none;
             border-radius: 8px;
-            background-color: #10b981;
+            /* [수정] 직접 감지 모달 버튼 색상 변경 */
+            background-color: #059669;
             color: white;
             font-weight: bold;
             cursor: pointer;
             transition: background-color 0.2s;
         }
         .modal-content button:hover:not(:disabled) {
-            background-color: #059669;
+            background-color: #047857;
         }
         .modal-content button:disabled {
             background-color: #ccc;
@@ -269,16 +272,19 @@
 <body>
     <h1>불법 소각 감지 지도 (Illegal Burning Detection Map)</h1>
     <div class="control-panel">
-        <button id="addFakeDataBtn" class="action-btn primary"><i class="fas fa-plus"></i> 가짜 데이터 추가</button>
+        <!-- [수정] 버튼 이름 및 ID 변경 -->
+        <button id="addDirectDataBtn" class="action-btn primary"><i class="fas fa-microchip"></i> 직접 감지 데이터 추가</button>
         <a href="citizen_report.html" class="action-btn secondary"><i class="fas fa-bullhorn"></i> 신고하기</a>
         <button id="addPreReportBtn" class="action-btn success"><i class="fas fa-calendar-check"></i> 소각 사전 신고</button>
         <button id="deleteAllBtn" class="action-btn danger"><i class="fas fa-trash-alt"></i> 데이터 모두 삭제 (Admin)</button>
     </div>
 
     <div id="map">
+        <!-- 지도 레전드 (범례) -->
         <div class="legend">
             <h3>지도 범례 (Legend)</h3>
             
+            <!-- A. 직접 감지 (Direct Detection - Circle) -->
             <div class="legend-item">
                 <div class="legend-icon circle red"></div>
                 직접 감지 (🚨 불법 소각 의심)
@@ -288,6 +294,7 @@
                 직접 감지 (✅ 사전 신고됨)
             </div>
 
+            <!-- B. 시민 신고 (Citizen Report - Triangle) -->
             <div class="legend-item">
                 <div class="legend-icon triangle red"></div>
                 시민 신고 (🚨 불법 소각 의심)
@@ -297,11 +304,13 @@
                 시민 신고 (✅ 사전 신고됨)
             </div>
 
+            <!-- C. 사전 신고 구역 (Pre-Report Area - L.Circle) -->
             <div class="legend-item">
                 <div class="legend-icon area"></div>
                 사전 신고 구역 (반경)
             </div>
 
+            <!-- D. 지도 클릭 위치 (Temporary Pin) -->
             <div class="legend-item">
                 <div class="legend-icon square blue"><i class="fas fa-thumbtack"></i></div>
                 임시 위치 핀 (클릭/드래그)
@@ -309,6 +318,35 @@
         </div>
     </div>
 
+    <!-- [추가] 직접 감지 데이터 입력 모달 (Direct Data Input Modal) -->
+    <div id="directDataModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeDirectDataModal()">&times;</span>
+            <h2><i class="fas fa-fire-alt"></i> 직접 감지 데이터 입력</h2>
+            <p style="margin-bottom: 20px; font-size: 0.9rem; color: #6b7280;">
+                선택된 위치에 대한 온도와 연기량을 입력합니다.
+            </p>
+            <form id="directDataForm">
+                <label for="directLat">위도 (Latitude):</label>
+                <input type="text" id="directLat" name="directLat" required readonly>
+                
+                <label for="directLon">경도 (Longitude):</label>
+                <input type="text" id="directLon" name="directLon" required readonly>
+
+                <label for="temperature">온도 (°C):</label>
+                <!-- 온도 입력 필드 추가 -->
+                <input type="number" id="temperature" name="temperature" placeholder="온도를 입력하세요 (예: 50.5)" step="0.1" min="0" required>
+
+                <label for="smokeLevel">연기량 (0-100):</label>
+                <!-- 연기량 입력 필드 추가 -->
+                <input type="number" id="smokeLevel" name="smokeLevel" placeholder="연기량을 입력하세요 (0-100)" min="0" max="100" required>
+
+                <button type="submit" id="directDataSubmitBtn"><i class="fas fa-upload"></i> 감지 데이터 등록</button>
+            </form>
+        </div>
+    </div>
+    
+    <!-- 소각 사전 신고 모달 (Pre-Report Modal) -->
     <div id="preReportModal" class="modal">
         <div class="modal-content">
             <span class="close" onclick="closePreReportModal()">&times;</span>
@@ -337,6 +375,7 @@
         </div>
     </div>
 
+    <!-- 메시지 박스 -->
     <div id="messageBox"></div>
 
     <script>
@@ -432,6 +471,27 @@
         function closeMessageBox() {
             document.getElementById('messageBox').style.display = 'none';
         }
+        
+        // [추가] 직접 감지 데이터 모달 제어
+        const directDataModal = document.getElementById('directDataModal');
+        const directLatInput = document.getElementById('directLat');
+        const directLonInput = document.getElementById('directLon');
+        const directDataSubmitBtn = document.getElementById('directDataSubmitBtn');
+
+        function openDirectDataModal() {
+             if (lastClickedLatLng) {
+                directLatInput.value = lastClickedLatLng.lat.toFixed(6);
+                directLonInput.value = lastClickedLatLng.lng.toFixed(6);
+                directDataModal.style.display = 'flex';
+            } else {
+                showMessageBox("🚨 지도를 클릭하여 감지 위치를 먼저 선택해주세요.", 'error');
+            }
+        }
+
+        function closeDirectDataModal() {
+            directDataModal.style.display = 'none';
+        }
+
 
         // 사전 신고 모달 제어
         const preReportModal = document.getElementById('preReportModal');
@@ -518,9 +578,13 @@
                         const color = isReported ? '#ff8c00' : '#dc2626'; 
                         const icon = createCircleIcon(color);
 
+                        // 온도 정보 추가
+                        const temperature = row.temperature !== undefined ? `${row.temperature}°C` : 'N/A';
+
                         const marker = L.marker([row.lat, row.lon], { icon: icon }).bindPopup(`
                             <b>[직접 감지]</b><br>
                             <b>시간:</b> ${new Date(row.time).toLocaleString()}<br>
+                            <b>온도:</b> ${temperature}<br>
                             <b>연기량:</b> ${row.smoke}<br>
                             <b>신고 여부:</b> ${isReported ? '✅ 사전 신고됨' : '🚨 불법 소각 의심'}
                         `);
@@ -624,6 +688,11 @@
                         preLatInput.value = position.lat.toFixed(6);
                         preLonInput.value = position.lng.toFixed(6);
                     }
+                     // [추가] 직접 감지 모달이 열려있는 경우, 좌표 필드 업데이트
+                     if (directDataModal.style.display === 'flex') {
+                        directLatInput.value = position.lat.toFixed(6);
+                        directLonInput.value = position.lng.toFixed(6);
+                    }
                 });
 
                 // 모달이 열려있는 경우, 좌표 필드 업데이트
@@ -631,24 +700,44 @@
                     preLatInput.value = lastClickedLatLng.lat.toFixed(6);
                     preLonInput.value = lastClickedLatLng.lng.toFixed(6);
                 }
+                // [추가] 직접 감지 모달이 열려있는 경우, 좌표 필드 업데이트
+                if (directDataModal.style.display === 'flex') {
+                    directLatInput.value = lastClickedLatLng.lat.toFixed(6);
+                    directLonInput.value = lastClickedLatLng.lng.toFixed(6);
+                }
             });
 
 
             // --- 7. 이벤트 리스너 및 API 호출 (버튼) ---
             
-            // 가짜 데이터 추가 버튼 (Direct Detection)
-            document.getElementById('addFakeDataBtn').addEventListener('click', async () => {
-                if (!lastClickedLatLng) {
-                    showMessageBox("🚨 지도를 클릭하여 감지 위치를 먼저 선택해주세요.", 'error');
+            // [수정] 직접 감지 데이터 추가 버튼 (Modal Open)
+            document.getElementById('addDirectDataBtn').addEventListener('click', openDirectDataModal);
+            
+            // [추가] 직접 감지 데이터 폼 제출 처리
+            document.getElementById('directDataForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                directDataSubmitBtn.disabled = true;
+
+                const form = e.target;
+                const lat = parseFloat(form.directLat.value);
+                const lon = parseFloat(form.directLon.value);
+                // [수정] 온도 및 연기량 값 가져오기
+                const temperature = parseFloat(form.temperature.value);
+                const smoke = parseInt(form.smokeLevel.value);
+
+                if (isNaN(temperature) || isNaN(smoke) || smoke < 0 || smoke > 100) {
+                    showMessageBox("🚨 온도 또는 연기량 입력값이 올바르지 않습니다.", 'error');
+                    directDataSubmitBtn.disabled = false;
                     return;
                 }
 
-                showMessageBox("가짜 데이터 (직접 감지) 추가 중...", 'info');
+                showMessageBox("직접 감지 데이터 등록 중...", 'info');
 
                 const payload = {
-                    lat: lastClickedLatLng.lat,
-                    lon: lastClickedLatLng.lng,
-                    smoke: Math.floor(Math.random() * 100), // 0 ~ 99
+                    lat, 
+                    lon, 
+                    temperature, // 온도 추가
+                    smoke,       // 연기량 추가
                     time: Date.now() 
                 };
 
@@ -660,6 +749,7 @@
                     });
 
                     if (response.ok) {
+                        closeDirectDataModal();
                         showMessageBox('✅ 직접 감지 데이터가 성공적으로 추가되었습니다.', 'success');
                         fetchData(); // 성공 후 지도 새로고침
                     } else {
@@ -670,6 +760,8 @@
                 } catch (error) {
                     console.error('API 호출 오류:', error);
                     showMessageBox('❌ 네트워크 오류로 데이터 추가에 실패했습니다.', 'error');
+                } finally {
+                    directDataSubmitBtn.disabled = false;
                 }
             });
 
