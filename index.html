@@ -79,10 +79,11 @@
             border-radius: 50%;
         }
 
+        /* 임시 핀 아이콘 스타일 */
         .temp-pin-icon {
             font-size: 24px;
             text-shadow: 0 2px 5px rgba(0,0,0,0.5);
-            color: #1e40af;
+            color: #1e40af; /* 파란색 */
         }
         
         /* MessageBox Styles */
@@ -275,11 +276,9 @@
     </div>
 
     <div id="map">
-        <!-- 지도 레전드 (범례) -->
         <div class="legend">
             <h3>지도 범례 (Legend)</h3>
             
-            <!-- A. 직접 감지 (Direct Detection - Circle) -->
             <div class="legend-item">
                 <div class="legend-icon circle red"></div>
                 직접 감지 (🚨 불법 소각 의심)
@@ -289,7 +288,6 @@
                 직접 감지 (✅ 사전 신고됨)
             </div>
 
-            <!-- B. 시민 신고 (Citizen Report - Triangle) -->
             <div class="legend-item">
                 <div class="legend-icon triangle red"></div>
                 시민 신고 (🚨 불법 소각 의심)
@@ -299,13 +297,11 @@
                 시민 신고 (✅ 사전 신고됨)
             </div>
 
-            <!-- C. 사전 신고 구역 (Pre-Report Area - L.Circle) -->
             <div class="legend-item">
                 <div class="legend-icon area"></div>
                 사전 신고 구역 (반경)
             </div>
 
-            <!-- D. 지도 클릭 위치 (Temporary Pin) -->
             <div class="legend-item">
                 <div class="legend-icon square blue"><i class="fas fa-thumbtack"></i></div>
                 임시 위치 핀 (클릭/드래그)
@@ -313,7 +309,6 @@
         </div>
     </div>
 
-    <!-- 소각 사전 신고 모달 (Pre-Report Modal) -->
     <div id="preReportModal" class="modal">
         <div class="modal-content">
             <span class="close" onclick="closePreReportModal()">&times;</span>
@@ -342,7 +337,6 @@
         </div>
     </div>
 
-    <!-- 메시지 박스 -->
     <div id="messageBox"></div>
 
     <script>
@@ -354,13 +348,16 @@
         let tempMarker = null; // 지도 클릭 시 임시 마커 저장
 
         // --- 2. Leaflet Custom Icon 생성 함수 (DivIcon 사용) ---
+        
+        // 🛠️ 임시 핀 및 일반 마커에 사용되는 기본 DivIcon 생성 함수
         function createDivIcon(htmlContent, className, color) {
             return L.divIcon({
-                html: `<div class="${className}" style="background-color: ${color};"><i class="${htmlContent}"></i></div>`,
-                className: 'custom-div-icon', // Leaflet 기본 스타일 오버라이드용
+                // htmlContent를 클래스 내부가 아닌, 직접 DivIcon의 HTML로 사용 (이전 템플릿과 충돌 방지)
+                html: `<div class="${className}" style="color: ${color};">${htmlContent}</div>`,
+                className: 'custom-div-icon',
                 iconSize: [24, 24],
-                iconAnchor: [12, 12],
-                popupAnchor: [0, -10]
+                iconAnchor: [0, 24], // 핀의 아래쪽 끝을 좌표에 맞춤
+                popupAnchor: [10, -20]
             });
         }
         
@@ -375,7 +372,7 @@
             });
         }
 
-        // 시민 신고용 삼각형 아이콘 (실제 마커 렌더링에 사용) - 여기서는 핀 모양으로 대체
+        // 시민 신고용 아이콘 (핀 모양으로 대체)
         function createTriangleIcon(color) {
              return L.divIcon({
                 html: `<div class="triangle-icon" style="background-color: ${color};"><i class="fas fa-map-pin"></i></div>`,
@@ -390,11 +387,6 @@
 
         /**
          * 두 좌표 간의 거리를 킬로미터(Km) 단위로 계산합니다.
-         * @param {number} lat1 - 첫 번째 위도
-         * @param {number} lon1 - 첫 번째 경도
-         * @param {number} lat2 - 두 번째 위도
-         * @param {number} lon2 - 두 번째 경도
-         * @returns {number} 거리 (Km)
          */
         function calculateDistance(lat1, lon1, lat2, lon2) {
             const R = 6371; // 지구 반지름 (킬로미터)
@@ -409,19 +401,17 @@
 
         /**
          * 감지/신고 데이터가 사전 신고 구역 및 시간 범위 내에 있는지 확인합니다.
-         * @param {number} lat - 감지/신고 위도
-         * @param {number} lon - 감지/신고 경도 (timestamp)
-         * @param {number} time - 감지/신고 시간 (timestamp)
-         * @param {Array<Object>} preReports - 사전 신고 데이터 목록
-         * @returns {boolean} 사전 신고 범위 내에 있으면 true
          */
         function isInPreReport(lat, lon, time, preReports) {
+            if (!Array.isArray(preReports) || preReports.length === 0) {
+                return false;
+            }
+            
             return preReports.some(pre => {
                 const distance = calculateDistance(lat, lon, pre.lat, pre.lon);
                 const isWithinRange = distance <= pre.rangeKm;
                 const isWithinTime = time >= pre.startDate && time <= pre.endDate;
                 
-                // console.log(`Check: Distance=${distance.toFixed(3)}km (Max: ${pre.rangeKm}km), Time: ${isWithinTime ? 'In' : 'Out'}`);
                 return isWithinRange && isWithinTime;
             });
         }
@@ -476,8 +466,13 @@
                 }
                 const data = await response.json();
                 
-                showMessageBox("✅ 데이터 로딩 완료!", 'success');
-                visualizeData(data.directDetections, data.citizenReports, data.preReports);
+                // 🛠️ 데이터 유효성 검사 추가 (null/undefined/non-array 처리)
+                const directDetections = Array.isArray(data.directDetections) ? data.directDetections : [];
+                const citizenReports = Array.isArray(data.citizenReports) ? data.citizenReports : [];
+                const preReports = Array.isArray(data.preReports) ? data.preReports : [];
+                
+                showMessageBox(`✅ 데이터 로딩 완료! (감지: ${directDetections.length}, 신고: ${citizenReports.length})`, 'success');
+                visualizeData(directDetections, citizenReports, preReports);
 
             } catch (error) {
                 console.error('데이터 로딩 오류:', error);
@@ -515,37 +510,41 @@
 
                 // B. 직접 감지 데이터 (directDetections) 처리
                 directDetections.forEach(row => {
-                    const isReported = isInPreReport(row.lat, row.lon, row.time, preReports);
-                    
-                    // 신고 여부에 따라 마커 색상 결정
-                    // 사전 신고됨 (Orange) vs. 불법 소각 의심 (Red)
-                    const color = isReported ? '#ff8c00' : '#dc2626'; 
-                    const icon = createCircleIcon(color);
+                    // 데이터가 유효한지 재확인 (혹시 모를 상황 대비)
+                    if (row.lat && row.lon && row.time) {
+                        const isReported = isInPreReport(row.lat, row.lon, row.time, preReports);
+                        
+                        // 신고 여부에 따라 마커 색상 결정
+                        const color = isReported ? '#ff8c00' : '#dc2626'; 
+                        const icon = createCircleIcon(color);
 
-                    const marker = L.marker([row.lat, row.lon], { icon: icon }).bindPopup(`
-                        <b>[직접 감지]</b><br>
-                        <b>시간:</b> ${new Date(row.time).toLocaleString()}<br>
-                        <b>연기량:</b> ${row.smoke}<br>
-                        <b>신고 여부:</b> ${isReported ? '✅ 사전 신고됨' : '🚨 불법 소각 의심'}
-                    `);
-                    markers.addLayer(marker);
+                        const marker = L.marker([row.lat, row.lon], { icon: icon }).bindPopup(`
+                            <b>[직접 감지]</b><br>
+                            <b>시간:</b> ${new Date(row.time).toLocaleString()}<br>
+                            <b>연기량:</b> ${row.smoke}<br>
+                            <b>신고 여부:</b> ${isReported ? '✅ 사전 신고됨' : '🚨 불법 소각 의심'}
+                        `);
+                        markers.addLayer(marker);
+                    }
                 });
 
                 // C. 시민 신고 데이터 (citizenReports) 처리
                 citizenReports.forEach(row => {
-                    const isReported = isInPreReport(row.lat, row.lon, row.time, preReports);
-                    
-                    // 신고 여부에 따라 마커 색상 결정
-                    // 사전 신고됨 (Orange) vs. 불법 소각 의심 (Red)
-                    const color = isReported ? '#ff8c00' : '#dc2626'; 
-                    const icon = createTriangleIcon(color);
+                     // 데이터가 유효한지 재확인
+                    if (row.lat && row.lon && row.time) {
+                        const isReported = isInPreReport(row.lat, row.lon, row.time, preReports);
+                        
+                        // 신고 여부에 따라 마커 색상 결정
+                        const color = isReported ? '#ff8c00' : '#dc2626'; 
+                        const icon = createTriangleIcon(color);
 
-                    const marker = L.marker([row.lat, row.lon], { icon: icon }).bindPopup(`
-                        <b>[시민 신고]</b><br>
-                        <b>시간:</b> ${new Date(row.time).toLocaleString()}<br>
-                        <b>신고 여부:</b> ${isReported ? '✅ 사전 신고됨' : '🚨 불법 소각 의심'}
-                    `);
-                    markers.addLayer(marker);
+                        const marker = L.marker([row.lat, row.lon], { icon: icon }).bindPopup(`
+                            <b>[시민 신고]</b><br>
+                            <b>시간:</b> ${new Date(row.time).toLocaleString()}<br>
+                            <b>신고 여부:</b> ${isReported ? '✅ 사전 신고됨' : '🚨 불법 소각 의심'}
+                        `);
+                        markers.addLayer(marker);
+                    }
                 });
 
                 map.addLayer(markers);
@@ -596,10 +595,6 @@
             fetchData();
             
             
-            // =================================================================
-            // 🐛 오류 수정: map 객체가 생성된 후 이벤트 리스너를 바인딩합니다.
-            // =================================================================
-            
             // --- 6. 지도 클릭 및 드래그 이벤트 (임시 핀 및 좌표 저장) ---
             map.on('click', (e) => {
                 lastClickedLatLng = e.latlng;
@@ -610,13 +605,7 @@
                 }
 
                 // 2. 새 임시 마커 생성 (파란색 핀) - draggable: true 추가
-                const pinIcon = L.divIcon({
-                    html: '<i class="fas fa-thumbtack"></i>',
-                    className: 'temp-pin-icon',
-                    iconSize: [24, 24],
-                    iconAnchor: [0, 24],
-                    popupAnchor: [10, -20]
-                });
+                const pinIcon = createDivIcon('<i class="fas fa-thumbtack"></i>', 'temp-pin-icon', '#1e40af'); // Dark Blue Pin
                 
                 tempMarker = L.marker(lastClickedLatLng, { icon: pinIcon, draggable: true }).addTo(map);
                 tempMarker.bindPopup(`<b>클릭된 위치:</b><br>Lat: ${lastClickedLatLng.lat.toFixed(6)}<br>Lon: ${lastClickedLatLng.lng.toFixed(6)}`).openPopup();
@@ -660,7 +649,7 @@
                     lat: lastClickedLatLng.lat,
                     lon: lastClickedLatLng.lng,
                     smoke: Math.floor(Math.random() * 100), // 0 ~ 99
-                    time: Date.now()
+                    time: Date.now() 
                 };
 
                 try {
@@ -675,7 +664,8 @@
                         fetchData(); // 성공 후 지도 새로고침
                     } else {
                         const errorData = await response.json().catch(() => ({})); 
-                        showMessageBox(`❌ 추가 실패: ${errorData.message || errorData.error || '서버 오류'}`, 'error');
+                        showMessageBox(`❌ 추가 실패: ${errorData.message || errorData.error || '서버 오류. 콘솔 확인.'}`, 'error');
+                        console.error('Add Direct API Error:', errorData);
                     }
                 } catch (error) {
                     console.error('API 호출 오류:', error);
