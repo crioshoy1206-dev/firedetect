@@ -620,14 +620,42 @@
         /**
          * 💡 모든 데이터 삭제 (관리자용)
          */
-        async function deleteAllData() {
-            showMessageBox("데이터 삭제 중...", 'info');
-            
-            try {
-                // index.js에 구현된 모든 데이터 삭제 API 호출
-                const response = await fetch('/api/delete/all', {
-                    method: 'POST'
-                });
+        /** 모든 데이터 삭제 (관리자용) */
+async function deleteAllData() {
+  showMessageBox("데이터 삭제 중...", 'info');
+
+  const candidates = [
+    { url: '/api/delete/all', method: 'POST' },     // 기존 기본값
+    { url: '/api/deleteAll',  method: 'POST' },     // 카멜케이스
+    { url: '/api/delete/all', method: 'DELETE' },   // DELETE 메서드
+    { url: '/api/admin/delete-all', method: 'POST'} // 관리자 prefix
+  ];
+
+  let lastError = '';
+
+  for (const ep of candidates) {
+    try {
+      const res = await fetch(ep.url, {
+        method: ep.method,
+        headers: { 'Content-Type': 'application/json' },
+        body: ep.method === 'POST' ? JSON.stringify({ confirm: true }) : undefined
+      });
+
+      if (res.ok) {
+        showMessageBox('✅ 모든 데이터가 삭제되었습니다.', 'success');
+        fetchData(); // 화면 새로 고침용
+        return;
+      } else {
+        const text = await res.text().catch(()=> '');
+        lastError = `HTTP ${res.status} ${res.statusText} - ${text or '본문 없음'}`;
+      }
+    } catch (e) {
+      lastError = e.message or '네트워크 예외';
+    }
+  }
+
+  showMessageBox(`❌ 삭제 실패: ${lastError or '서버 연결 오류'}`, 'error');
+});
 
                 if (response.ok) {
                     showMessageBox('✅ 데이터베이스의 모든 데이터가 성공적으로 삭제되었습니다.', 'success');
