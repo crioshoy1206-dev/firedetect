@@ -527,7 +527,7 @@
                 const data = await response.json();
                 
                 // 🛠️ 데이터 유효성 검사 추가 (null/undefined/non-array 처리)
-                const directDetections = Array.isArray(data.directDetections) ? data.directDetections : [];
+                const directDetections = Array.isArray(data.sensorData) ? data.sensorData : [];
                 const citizenReports = Array.isArray(data.citizenReports) ? data.citizenReports : [];
                 const preReports = Array.isArray(data.preReports) ? data.preReports : [];
                 
@@ -742,7 +742,7 @@
                 };
 
                 try {
-                    const response = await fetch('/api/add/direct', {
+                    const response = await fetch('/api/add/citizen', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
