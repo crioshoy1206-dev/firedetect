@@ -527,12 +527,12 @@
                 const data = await response.json();
                 
                 // 🛠️ 데이터 유효성 검사 추가 (null/undefined/non-array 처리)
-                const directDetections = Array.isArray(data.directDetections) ? data.directDetections : [];
+                const sensorData = Array.isArray(data.sensorData) ? data.sensorData : [];
                 const citizenReports = Array.isArray(data.citizenReports) ? data.citizenReports : [];
                 const preReports = Array.isArray(data.preReports) ? data.preReports : [];
                 
-                showMessageBox(`✅ 데이터 로딩 완료! (감지: ${directDetections.length}, 신고: ${citizenReports.length})`, 'success');
-                visualizeData(directDetections, citizenReports, preReports);
+                showMessageBox(`✅ 데이터 로딩 완료! (감지: ${sensorData.length}, 신고: ${citizenReports.length})`, 'success');
+                visualizeData(sensorData, citizenReports, preReports);
 
             } catch (error) {
                 console.error('데이터 로딩 오류:', error);
@@ -541,7 +541,7 @@
         }
 
         // 지도 시각화
-        function visualizeData(directDetections, citizenReports, preReports) {
+        function visualizeData(sensorData, citizenReports, preReports) {
             try {
                 // 기존 마커 및 원 제거
                 markers.clearLayers();
@@ -568,8 +568,8 @@
                 });
                 map.addLayer(preReportsCircles);
 
-                // B. 직접 감지 데이터 (directDetections) 처리
-                directDetections.forEach(row => {
+                // B. 직접 감지 데이터 (sensorData) 처리
+                sensorData.forEach(row => {
                     // 데이터가 유효한지 재확인 (혹시 모를 상황 대비)
                     if (row.lat && row.lon && row.time) {
                         const isReported = isInPreReport(row.lat, row.lon, row.time, preReports);
@@ -831,22 +831,5 @@
         window.onload = initializeMap;
 
     </script>
-
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-  try {
-    if (typeof initializeMap === 'function') {
-      initializeMap();
-    } else {
-      console.error('initializeMap 함수가 정의되어 있지 않습니다.');
-    }
-  } catch (e) {
-    console.error('지도 초기화 중 오류:', e);
-    if (typeof showMessageBox === 'function') {
-      showMessageBox('❌ 지도 초기화 오류: ' + (e.message || e), 'error');
-    }
-  }
-});
-</script>
 </body>
 </html>

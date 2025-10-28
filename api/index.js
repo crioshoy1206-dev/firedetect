@@ -187,4 +187,54 @@ app.post('/api/add/pre', async (req, res) => {
     }
 });
 
+/**
+ * 🧹 DELETE/POST /api/delete/all
+ * - Firestore의 sensorData, citizenReports, preReports 전체 문서 삭제
+ * - 안전을 위해 서버에서만 수행 (Firebase Admin SDK 사용)
+ * - 응답: { deleted: { sensorData: n, citizenReports: n, preReports: n } }
+ */
+async function deleteCollection(db, collectionName, batchSize = 300) {
+  const collectionRef = db.collection(collectionName);
+  let deleted = 0;
+
+  while (true) {
+    const snapshot = await collectionRef.limit(batchSize).get();
+    if (snapshot.empty) break;
+
+    const batch = db.batch();
+    snapshot.docs.forEach(doc => batch.delete(doc.ref));
+    await batch.commit();
+    deleted += snapshot.size;
+    await new Promise(r => setTimeout(r, 0));
+  }
+  return deleted;
+}
+
+app.delete('/api/delete/all', async (req, res) => {
+  try {
+    const result = {};
+    for (const c of ['sensorData', 'citizenReports', 'preReports']) {
+      result[c] = await deleteCollection(db, c);
+    }
+    return res.json({ ok: true, deleted: result });
+  } catch (err) {
+    console.error('🔥 Error deleting all:', err);
+    return res.status(500).json({ ok: false, error: 'Delete failed', detail: err.message });
+  }
+});
+
+// POST 메서드도 허용 (프론트엔드에서 POST만 쓰는 경우 대비)
+app.post('/api/delete/all', async (req, res) => {
+  try {
+    const result = {};
+    for (const c of ['sensorData', 'citizenReports', 'preReports']) {
+      result[c] = await deleteCollection(db, c);
+    }
+    return res.json({ ok: true, deleted: result });
+  } catch (err) {
+    console.error('🔥 Error deleting all (POST):', err);
+    return res.status(500).json({ ok: false, error: 'Delete failed', detail: err.message });
+  }
+});
+
 module.exports = app;
