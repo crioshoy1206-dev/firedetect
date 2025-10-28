@@ -349,160 +349,48 @@
         window.onload = initializeMap;
 
     </script>
+</body>
+</html>
 
-
-<!-- === citizen_report fix: use /api/data and render citizenReports + preReports === -->
 <script>
-  const API_DATA_ENDPOINT = "/api/data";
-  const INITIAL_VIEW = [37.5665, 126.9780];
-  const INITIAL_ZOOM = 14;
-
-  let map = null;
-  let centerMarker = null;
-  let isSubmitting = false;
-  const citizenLayer = L.layerGroup();
-  const preLayer = L.layerGroup();
-
-  function showMessageBox(msg, type = 'info') {
-    const box = document.getElementById('message-box');
-    if (!box) { console.log('[msg]', type, msg); return; }
-    const icon = document.getElementById('msg-icon');
-    const text = document.getElementById('msg-text');
-    if (text) text.innerText = msg;
-    if (icon) icon.className = 'icon ' + (type === 'success' ? 'success' : type === 'error' ? 'error' : '');
-    box.style.display = 'block';
-  }
-  function closeMessageBox(){
-    const box = document.getElementById('message-box');
-    if (box) box.style.display='none';
-  }
-
-  function initializeMap(forceRefresh = false) {
-    if (!map) {
-      map = L.map('map').setView(INITIAL_VIEW, INITIAL_ZOOM);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors'
-      }).addTo(map);
-      centerMarker = L.marker(INITIAL_VIEW, { draggable:false }).addTo(map);
-      citizenLayer.addTo(map);
-      preLayer.addTo(map);
-      map.on('moveend', () => { updateCenterLocation(); fetchAndDisplayReports(); });
+  async function fetchWithCandidates(candidates) {
+    let lastErr = null;
+    for (const url of candidates) {
+      try {
+        const res = await fetch(url);
+        if (res.ok) return res.json();
+        lastErr = 'HTTP ' + res.status + ' ' + res.statusText + ' @ ' + url;
+      } catch (e) {
+        lastErr = (e.message || String(e)) + ' @ ' + url;
+      }
     }
-    if (navigator.geolocation && !forceRefresh) {
-      navigator.geolocation.getCurrentPosition(pos => {
-        const latlng = [pos.coords.latitude, pos.coords.longitude];
-        map.setView(latlng, INITIAL_ZOOM);
-        centerMarker.setLatLng(latlng);
-        updateCenterLocation();
-        fetchAndDisplayReports();
-      }, () => { updateCenterLocation(); fetchAndDisplayReports(); });
-    } else {
-      updateCenterLocation();
-      fetchAndDisplayReports();
-    }
+    throw new Error(lastErr || 'no endpoint');
   }
 
-  function updateCenterLocation() {
-    const c = map.getCenter();
-    const latEl = document.getElementById('current-lat');
-    const lonEl = document.getElementById('current-lon');
-    if (latEl) latEl.innerText = c.lat.toFixed(6);
-    if (lonEl) lonEl.innerText = c.lng.toFixed(6);
-    if (centerMarker) centerMarker.setLatLng(c);
-  }
+  const API_CANDIDATES = ['/api/data','/api/index','/api/data/','/api'];
 
-  async function fetchAndDisplayReports() {
+  async function fetchAndDisplayReports_auto() {
     try {
-      const res = await fetch(API_DATA_ENDPOINT);
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
+      const data = await fetchWithCandidates(API_CANDIDATES);
       const citizenReports = Array.isArray(data.citizenReports) ? data.citizenReports : [];
       const preReports = Array.isArray(data.preReports) ? data.preReports : [];
-
-      const bounds = map.getBounds();
-      const inBounds = (lat, lon) => bounds.contains([parseFloat(lat), parseFloat(lon)]);
-
-      const citizensInView = citizenReports.filter(r => r.lat!=null && r.lon!=null && inBounds(r.lat, r.lon));
-      const preInView = preReports.filter(r => r.lat!=null && r.lon!=null && inBounds(r.lat, r.lon));
-
-      displayReportsOnMap(citizensInView, preInView);
+      // delegate to existing display if present
+      if (typeof displayReportsOnMap === 'function') {
+        const bounds = map.getBounds();
+        const inBounds = (lat, lon) => bounds.contains([parseFloat(lat), parseFloat(lon)]);
+        const citizensInView = citizenReports.filter(r => r.lat!=null && r.lon!=null && inBounds(r.lat, r.lon));
+        const preInView = preReports.filter(r => r.lat!=null && r.lon!=null && inBounds(r.lat, r.lon));
+        displayReportsOnMap(citizensInView, preInView);
+      }
+      const el = document.getElementById('report-count');
+      if (el) el.innerText = (citizenReports.length + preReports.length);
     } catch (e) {
       console.error('신고 목록 조회 실패:', e);
       const box = document.getElementById('report-count-box');
-      if (box) box.innerHTML = `⚠️ 주변 신고 조회 실패: ${String(e).slice(0,80)}...`;
+      if (box) box.innerHTML = `⚠️ 주변 신고 조회 실패: ${String(e.message||e).slice(0,120)}`;
     }
   }
 
-  function displayReportsOnMap(citizens, pre) {
-    citizenLayer.clearLayers();
-    preLayer.clearLayers();
-    const countEl = document.getElementById('report-count');
-    if (countEl) countEl.innerText = citizens.length + pre.length;
-
-    const fireIcon = L.divIcon({ className: 'fire-icon', html: '🔥', iconSize: [20,20] });
-    const memoIcon = L.divIcon({ className: 'fire-icon', html: '📝', iconSize: [20,20] });
-
-    citizens.forEach(r => {
-      const lat = parseFloat(r.lat), lon = parseFloat(r.lon);
-      const time = r.time ? new Date(r.time).toLocaleString('ko-KR') : '-';
-      if (isFinite(lat) && isFinite(lon)) {
-        L.marker([lat, lon], { icon: fireIcon })
-          .bindPopup(`<b>불법 소각 신고</b><br>시각: ${time}<br>위치: ${lat.toFixed(4)}, ${lon.toFixed(4)}`)
-          .addTo(citizenLayer);
-      }
-    });
-
-    pre.forEach(r => {
-      const lat = parseFloat(r.lat), lon = parseFloat(r.lon);
-      const start = r.startDate ? new Date(r.startDate).toLocaleString('ko-KR') : '-';
-      const end = r.endDate ? new Date(r.endDate).toLocaleString('ko-KR') : '-';
-      const rangeM = Math.max(0, parseFloat(r.rangeKm || 0.1)) * 1000;
-      if (isFinite(lat) && isFinite(lon)) {
-        L.marker([lat, lon], { icon: memoIcon })
-          .bindPopup(`<b>소각 사전 신고</b><br>기간: ${start} ~ ${end}<br>범위: ${(rangeM/1000).toFixed(2)} km<br>위치: ${lat.toFixed(4)}, ${lon.toFixed(4)}`)
-          .addTo(preLayer);
-        L.circle([lat, lon], { radius: rangeM, fillOpacity: 0.08, weight: 1 })
-          .addTo(preLayer);
-      }
-    });
-  }
-
-  async function submitCitizenReport() {
-    if (isSubmitting) return;
-    const btn = document.getElementById('submit-btn');
-    if (btn) btn.disabled = true;
-    isSubmitting = true;
-
-    const c = map.getCenter();
-    const payload = { lat: c.lat, lon: c.lng, time: Date.now() };
-    showMessageBox("🚨 신고 접수 중입니다. 잠시만 기다려주세요…");
-    try {
-      const res = await fetch('/api/add/citizen', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      closeMessageBox();
-      if (res.ok) {
-        const r = await res.json().catch(()=>({}));
-        showMessageBox(`✅ 신고 성공! (ID: ${r.id||'-'})`, 'success');
-        fetchAndDisplayReports();
-      } else {
-        let detail = 'HTTP ' + res.status;
-        try { const e = await res.json(); detail = e.message || e.error || detail; } catch(_){}
-        showMessageBox('❌ 신고 실패: ' + detail, 'error');
-      }
-    } catch (e) {
-      console.error(e);
-      showMessageBox('❌ 네트워크 오류: 서버와 통신할 수 없습니다.', 'error');
-    } finally {
-      if (btn) btn.disabled = false;
-      isSubmitting = false;
-    }
-  }
-
-  window.addEventListener('load', initializeMap);
+  // Replace original fetchAndDisplayReports if exists
+  window.fetchAndDisplayReports = fetchAndDisplayReports_auto;
 </script>
-
-</body>
-</html>
