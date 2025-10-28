@@ -733,16 +733,13 @@
 
                 showMessageBox("직접 감지 데이터 등록 중...", 'info');
 
-                const payload = {
-                    lat, 
-                    lon, 
-                    temperature, // 온도 추가
+                const payload = { lat, lon, temp: temperature, // 온도 추가
                     smoke,       // 연기량 추가
                     time: Date.now() 
                 };
 
                 try {
-                    const response = await fetch('/api/add/direct', {
+                    const response = await fetch('/api/add/sensor', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
