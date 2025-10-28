@@ -13,7 +13,8 @@
         body { margin: 0; font-family: 'Noto Sans KR', sans-serif; display: flex; flex-direction: column; height: 100vh; }
         h1 { text-align: center; margin: 1vh 0; font-size: 1.5rem; color: #333; }
         
-        #map { 
+        #map {
+            min-height: 60vh; 
             flex-grow: 1; 
             width: 100%; 
             z-index: 0; 
@@ -828,5 +829,33 @@
         window.onload = initializeMap;
 
     </script>
+
+<script>
+(function(){
+  var __mapInitAttempts = 0;
+  function tryInitMap(){
+    try {
+      if (typeof L === 'undefined') {
+        if (__mapInitAttempts++ < 20) return setTimeout(tryInitMap, 200);
+        console.error('Leaflet (L) not loaded');
+        return;
+      }
+      if (typeof initializeMap === 'function') {
+        initializeMap();
+      } else {
+        console.error('initializeMap 함수가 없습니다.');
+      }
+    } catch (e) {
+      console.error('지도 초기화 오류:', e);
+    }
+  }
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    setTimeout(tryInitMap, 0);
+  } else {
+    document.addEventListener('DOMContentLoaded', tryInitMap);
+  }
+  window.addEventListener('load', tryInitMap);
+})();
+</script>
 </body>
 </html>
