@@ -142,7 +142,7 @@
     <script>
         // API 엔드포인트 정의
         const API_ADD_ENDPOINT = "/api/add/citizen"; // 신고 제출
-        const API_GET_ENDPOINT = "/api/get/citizens"; // 신고 목록 조회
+        const API_DATA_ENDPOINT = "/api/data"; // 신고 목록 조회
         
         const INITIAL_VIEW = [37.5665, 126.9780]; // 서울 시청
         const INITIAL_ZOOM = 14;
@@ -232,57 +232,45 @@
 
         /** 서버에서 신고 목록을 가져와 지도에 표시합니다. */
         async function fetchAndDisplayReports() {
-            const center = map.getCenter();
-            const bounds = map.getBounds();
-            
-            // 지도의 현재 경계를 기준으로 데이터를 요청합니다.
-            const url = `${API_GET_ENDPOINT}?minLat=${bounds.getSouth()}&maxLat=${bounds.getNorth()}&minLon=${bounds.getWest()}&maxLon=${bounds.getEast()}`;
-            
-            try {
-                const response = await fetch(url);
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP 오류! 상태: ${response.status}`);
-                }
-                
-                const reports = await response.json();
-                displayReportsOnMap(reports);
+    const bounds = map.getBounds();
+    const inBounds = (lat, lon) => {
+        const a = parseFloat(lat), b = parseFloat(lon);
+        return Number.isFinite(a) && Number.isFinite(b) && bounds.contains([a,b]);
+    };
 
-            } catch (error) {
-                console.error("신고 목록 조회 실패:", error);
-                document.getElementById('report-count-box').innerHTML = `⚠️ 주변 신고 조회 실패: ${error.message.substring(0, 50)}...`;
-                // 신고 목록 조회는 치명적이지 않으므로 메시지 박스는 띄우지 않습니다.
-            }
+    (async () => {
+        try {
+            const res = await fetch(API_DATA_ENDPOINT);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            const preReports = Array.isArray(data.preReports) ? data.preReports : [];
+            const list = preReports.filter(r => inBounds(r.lat, r.lon));
+            displayPreReportsOnMap(list);
+        } catch (e) {
+            console.error("사전 신고 조회 실패:", e);
+            document.getElementById('report-count-box').innerHTML = `⚠️ 주변 사전신고 조회 실패: ${String(e).slice(0,80)}...`;
         }
+    })();
+}
         
         /** 받아온 신고 데이터를 지도에 마커로 표시합니다. */
-        function displayReportsOnMap(reports) {
-            reportMarkers.clearLayers(); // 기존 마커 모두 제거
-            
-            const reportCountElement = document.getElementById('report-count');
-            reportCountElement.innerText = reports.length;
-            
-            const fireIcon = L.divIcon({
-                className: 'fire-icon',
-                html: '🔥', // 불꽃 이모지 사용
-                iconSize: [20, 20]
-            });
-
-            reports.forEach(report => {
-                const lat = parseFloat(report.lat);
-                const lon = parseFloat(report.lon);
-                const time = new Date(report.time).toLocaleString('ko-KR', {
-                    year: 'numeric', month: '2-digit', day: '2-digit', 
-                    hour: '2-digit', minute: '2-digit'
-                });
-
-                if (!isNaN(lat) && !isNaN(lon)) {
-                    L.marker([lat, lon], {icon: fireIcon})
-                        .bindPopup(`<b>불법 소각 신고</b><br>신고 시각: ${time}<br>위치: ${lat.toFixed(4)}, ${lon.toFixed(4)}`)
-                        .addTo(reportMarkers);
-                }
-            });
-        }
+        function displayPreReportsOnMap(reports) {
+    reportMarkers.clearLayers();
+    document.getElementById('report-count').innerText = reports.length;
+    const memoIcon = L.divIcon({ className:'fire-icon', html: '📝', iconSize: [20,20] });
+    reports.forEach(r => {
+        const lat = parseFloat(r.lat), lon = parseFloat(r.lon);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+        const start = r.startDate ? new Date(r.startDate).toLocaleString('ko-KR') : '-';
+        const end   = r.endDate ? new Date(r.endDate).toLocaleString('ko-KR') : '-';
+        const rangeKm = Math.max(0, parseFloat(r.rangeKm || 0.1));
+        const rangeM  = rangeKm * 1000;
+        L.marker([lat, lon], { icon: memoIcon })
+         .bindPopup(`<b>소각 사전 신고</b><br>기간: ${start} ~ ${end}<br>범위: ${rangeKm.toFixed(2)} km<br>위치: ${lat.toFixed(4)}, ${lon.toFixed(4)}`)
+         .addTo(reportMarkers);
+        L.circle([lat, lon], { radius: rangeM, fillOpacity: 0.08, weight: 1 }).addTo(reportMarkers);
+    });
+}
 
 
         /** 시민 신고 데이터를 Vercel API를 통해 전송합니다. */
@@ -351,46 +339,3 @@
     </script>
 </body>
 </html>
-
-<script>
-  async function fetchWithCandidates(candidates) {
-    let lastErr = null;
-    for (const url of candidates) {
-      try {
-        const res = await fetch(url);
-        if (res.ok) return res.json();
-        lastErr = 'HTTP ' + res.status + ' ' + res.statusText + ' @ ' + url;
-      } catch (e) {
-        lastErr = (e.message || String(e)) + ' @ ' + url;
-      }
-    }
-    throw new Error(lastErr || 'no endpoint');
-  }
-
-  const API_CANDIDATES = ['/api/data','/api/index','/api/data/','/api'];
-
-  async function fetchAndDisplayReports_auto() {
-    try {
-      const data = await fetchWithCandidates(API_CANDIDATES);
-      const citizenReports = Array.isArray(data.citizenReports) ? data.citizenReports : [];
-      const preReports = Array.isArray(data.preReports) ? data.preReports : [];
-      // delegate to existing display if present
-      if (typeof displayReportsOnMap === 'function') {
-        const bounds = map.getBounds();
-        const inBounds = (lat, lon) => bounds.contains([parseFloat(lat), parseFloat(lon)]);
-        const citizensInView = citizenReports.filter(r => r.lat!=null && r.lon!=null && inBounds(r.lat, r.lon));
-        const preInView = preReports.filter(r => r.lat!=null && r.lon!=null && inBounds(r.lat, r.lon));
-        displayReportsOnMap(citizensInView, preInView);
-      }
-      const el = document.getElementById('report-count');
-      if (el) el.innerText = (citizenReports.length + preReports.length);
-    } catch (e) {
-      console.error('신고 목록 조회 실패:', e);
-      const box = document.getElementById('report-count-box');
-      if (box) box.innerHTML = `⚠️ 주변 신고 조회 실패: ${String(e.message||e).slice(0,120)}`;
-    }
-  }
-
-  // Replace original fetchAndDisplayReports if exists
-  window.fetchAndDisplayReports = fetchAndDisplayReports_auto;
-</script>
