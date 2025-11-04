@@ -267,6 +267,14 @@
              border-radius: 50%;
              box-shadow: none;
         }
+
+  /* Leaflet 레이어 토글(범례) 숨김 */
+  .leaflet-control-layers { display: none !important; }
+  /* 혹시 커스텀 범례(#legend/.legend)를 썼다면 같이 숨김 */
+  #legend, .legend { display: none !important; }
+  /* 스케일 눈금/축척도까지 숨기려면 ↓ (선택) */
+  /* .leaflet-control-scale { display: none !important; } */
+
     </style>
 </head>
 <body>
