@@ -828,5 +828,48 @@
         window.onload = initializeMap;
 
     </script>
+<!-- ✅ 임계값(연기≥50 또는 온도≥40℃) 필터 패치: </body> 바로 위에 붙여넣기 -->
+<script>
+(function () {
+  // 원래 visualizeData가 있으면 감싸서 sensorData만 필터링
+  function install() {
+    if (typeof window.visualizeData !== 'function') return false;
+
+    const original = window.visualizeData;
+    window.visualizeData = function (sensorData, citizenReports, preReports) {
+      try {
+        const filtered = Array.isArray(sensorData) ? sensorData.filter(row => {
+          if (!row) return false;
+          const smokeVal = Number(row.smoke);
+          const tempRaw  = (row.temp !== undefined) ? row.temp
+                        : (row.temperature !== undefined ? row.temperature : NaN);
+          const tempVal  = Number(tempRaw);
+          const overSmoke = Number.isFinite(smokeVal) && smokeVal >= 50;
+          const overTemp  = Number.isFinite(tempVal)  && tempVal  >= 40;
+          return overSmoke || overTemp;
+        }) : [];
+
+        // 나머지는 그대로 원본 로직 실행
+        return original.call(this, filtered, citizenReports, preReports);
+      } catch (e) {
+        console.error('threshold patch error:', e);
+        // 문제 있으면 원본 그대로 호출 (안전장치)
+        return original.call(this, sensorData, citizenReports, preReports);
+      }
+    };
+    console.log('✅ sensorData threshold patch installed (smoke≥50 || temp≥40°C)');
+    return true;
+  }
+
+  // DOM 준비/지연 로딩 대비: 여러 타이밍에서 시도
+  if (!install()) {
+    document.addEventListener('DOMContentLoaded', install);
+    window.addEventListener('load', install);
+    setTimeout(install, 500);
+    setTimeout(install, 1500);
+  }
+})();
+</script>
+
 </body>
 </html>
